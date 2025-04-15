@@ -2,8 +2,11 @@ import os
 import psycopg2
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
@@ -162,3 +165,22 @@ class Database:
             }
             
             return totals 
+
+    def get_weekly_summary(self, user_id: int) -> list:
+        """Get daily calorie intake for the last 7 days."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT 
+                        DATE(created_at) as date,
+                        SUM(calories) as total_calories
+                    FROM meals
+                    WHERE user_id = %s
+                    AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+                    GROUP BY DATE(created_at)
+                    ORDER BY date DESC
+                """, (user_id,))
+                return cur.fetchall()
+        except Exception as e:
+            logger.error(f"Error getting weekly summary for user {user_id}: {str(e)}")
+            return [] 
