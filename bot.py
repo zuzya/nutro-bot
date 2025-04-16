@@ -174,7 +174,6 @@ class FoodTrackerBot:
             'Что бы вы хотели сделать?\n\n'
             'Доступные команды:\n'
             '/set_goals - Установить цели по питанию\n'
-            '/menu - Показать это меню\n'
             '/help - Показать справку\n\n'
             'Чтобы добавить прием пищи, просто напишите, что вы съели.'
         )
@@ -535,16 +534,71 @@ class FoodTrackerBot:
                     await update.message.reply_text(message, reply_markup=reply_markup)
                 return
             
-            response = '📊 Ваше потребление калорий за последние 7 дней:\n\n'
-            for day in weekly_data:
-                date_str = day[0].strftime('%Y-%m-%d')
-                calories = day[1] or 0
-                response += f'• {date_str}: {calories} калорий\n'
+            response = '📊 Ваше потребление за последние 7 дней:\n\n'
             
-            # Calculate average
-            total_calories = sum(day[1] or 0 for day in weekly_data)
-            avg_calories = total_calories / len(weekly_data)
-            response += f'\n📈 Среднее дневное потребление: {avg_calories:.0f} калорий'
+            # Get goals from the first day's data
+            goal_calories = weekly_data[0]['goal_calories']
+            goal_protein = weekly_data[0]['goal_protein']
+            goal_fat = weekly_data[0]['goal_fat']
+            goal_carbs = weekly_data[0]['goal_carbs']
+            
+            # Initialize totals for averages
+            total_days = len(weekly_data)
+            total_calories = 0
+            total_protein = 0
+            total_fat = 0
+            total_carbs = 0
+            days_reached_calories = 0
+            days_reached_protein = 0
+            days_reached_fat = 0
+            days_reached_carbs = 0
+            
+            for day in weekly_data:
+                date_str = day['date'].strftime('%Y-%m-%d')
+                response += f'📅 {date_str}:\n'
+                response += f'• Калории: {day["calories"]}/{goal_calories}'
+                response += ' ✅' if day['reached_goals']['calories'] else ' ❌'
+                response += f'\n• Белки: {day["protein"]:.1f}/{goal_protein}г'
+                response += ' ✅' if day['reached_goals']['protein'] else ' ❌'
+                response += f'\n• Жиры: {day["fat"]:.1f}/{goal_fat}г'
+                response += ' ✅' if day['reached_goals']['fat'] else ' ❌'
+                response += f'\n• Углеводы: {day["carbs"]:.1f}/{goal_carbs}г'
+                response += ' ✅' if day['reached_goals']['carbs'] else ' ❌'
+                response += '\n\n'
+                
+                # Update totals
+                total_calories += day['calories']
+                total_protein += day['protein']
+                total_fat += day['fat']
+                total_carbs += day['carbs']
+                
+                # Update goal achievement counters
+                if day['reached_goals']['calories']:
+                    days_reached_calories += 1
+                if day['reached_goals']['protein']:
+                    days_reached_protein += 1
+                if day['reached_goals']['fat']:
+                    days_reached_fat += 1
+                if day['reached_goals']['carbs']:
+                    days_reached_carbs += 1
+            
+            # Calculate averages
+            avg_calories = total_calories / total_days
+            avg_protein = total_protein / total_days
+            avg_fat = total_fat / total_days
+            avg_carbs = total_carbs / total_days
+            
+            response += f'📈 Средние показатели за неделю:\n'
+            response += f'• Калории: {avg_calories:.0f}/{goal_calories}\n'
+            response += f'• Белки: {avg_protein:.1f}/{goal_protein}г\n'
+            response += f'• Жиры: {avg_fat:.1f}/{goal_fat}г\n'
+            response += f'• Углеводы: {avg_carbs:.1f}/{goal_carbs}г\n\n'
+            
+            response += f'🎯 Достижение целей:\n'
+            response += f'• Калории: {days_reached_calories}/{total_days} дней ({days_reached_calories/total_days*100:.0f}%)\n'
+            response += f'• Белки: {days_reached_protein}/{total_days} дней ({days_reached_protein/total_days*100:.0f}%)\n'
+            response += f'• Жиры: {days_reached_fat}/{total_days} дней ({days_reached_fat/total_days*100:.0f}%)\n'
+            response += f'• Углеводы: {days_reached_carbs}/{total_days} дней ({days_reached_carbs/total_days*100:.0f}%)'
             
             if is_callback:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)

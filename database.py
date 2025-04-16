@@ -1,8 +1,10 @@
 import os
-import psycopg2
-from datetime import datetime, timezone
-from dotenv import load_dotenv
 import logging
+from sqlalchemy import create_engine, func, and_, desc
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime, timedelta
+from models import Base, User, UserGoals, Meal
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -10,177 +12,230 @@ logger = logging.getLogger(__name__)
 
 class Database:
     def __init__(self):
-        self.conn = None
-        self.connect()
-
-    def connect(self):
-        """Create a connection to the database."""
-        print("Connecting to database with environment variables...")
+        """Initialize database connection."""
+        self.db_user = os.getenv('DB_USER')
+        self.db_password = os.getenv('DB_PASSWORD')
+        self.db_name = os.getenv('DB_NAME')
+        self.db_host = os.getenv('DB_HOST')
+        self.db_port = os.getenv('DB_PORT')
         
-        # Get database configuration from environment variables
-        db_user = os.getenv('DB_USER')
-        db_password = os.getenv('DB_PASSWORD')
-        db_name = os.getenv('DB_NAME')
-        db_host = os.getenv('DB_HOST')
-        db_port = os.getenv('DB_PORT')
+        # Create database URL
+        self.db_url = f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        
+        # Create engine and session
+        self.engine = create_engine(self.db_url)
+        self.Session = sessionmaker(bind=self.engine)
+        
+        # Create tables
+        Base.metadata.create_all(self.engine)
+        logger.info("Database initialized and tables created")
 
-        # Validate environment variables
-        if not all([db_user, db_password, db_name, db_host, db_port]):
-            raise ValueError("Missing required database environment variables")
+    def _get_or_create_user(self, session, telegram_id):
+        """Get existing user or create new one."""
+        user = session.query(User).filter_by(telegram_id=telegram_id).first()
+        if not user:
+            user = User(telegram_id=telegram_id)
+            session.add(user)
+            session.commit()
+        return user
 
-        if not self.conn:
-            self.conn = psycopg2.connect(
-                user=db_user,
-                password=db_password,
-                database=db_name,
-                host=db_host,
-                port=db_port
-            )
-
-    def init_db(self):
-        """Initialize the database schema."""
-        with self.conn.cursor() as cur:
-            # Create users table
-            cur.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+    def set_user_goals(self, telegram_id: int, goals: dict):
+        """Set or update user's nutrition goals."""
+        session = self.Session()
+        try:
+            user = self._get_or_create_user(session, telegram_id)
             
-            # Create goals table
-            cur.execute('''
-                CREATE TABLE IF NOT EXISTS goals (
-                    user_id BIGINT PRIMARY KEY REFERENCES users(user_id),
-                    calories INTEGER,
-                    protein INTEGER,
-                    fat INTEGER,
-                    carbs INTEGER,
-                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+            # Check if goals exist
+            user_goals = session.query(UserGoals).filter_by(user_id=user.id).first()
             
-            # Create meals table
-            cur.execute('''
-                CREATE TABLE IF NOT EXISTS meals (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT REFERENCES users(user_id),
-                    description TEXT,
-                    calories INTEGER,
-                    protein INTEGER,
-                    fat INTEGER,
-                    carbs INTEGER,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            if user_goals:
+                # Update existing goals
+                user_goals.calories = goals['calories']
+                user_goals.protein = goals['protein']
+                user_goals.fat = goals['fat']
+                user_goals.carbs = goals['carbs']
+            else:
+                # Create new goals
+                user_goals = UserGoals(
+                    user_id=user.id,
+                    calories=goals['calories'],
+                    protein=goals['protein'],
+                    fat=goals['fat'],
+                    carbs=goals['carbs']
                 )
-            ''')
-        self.conn.commit()
+                session.add(user_goals)
+            
+            session.commit()
+            logger.info(f"Set goals for user {telegram_id}: {goals}")
+            
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error setting goals for user {telegram_id}: {str(e)}")
+            raise
+        finally:
+            session.close()
 
-    def ensure_user_exists(self, user_id: int):
-        """Ensure user exists in the database."""
-        with self.conn.cursor() as cur:
-            cur.execute(
-                'INSERT INTO users (user_id) VALUES (%s) ON CONFLICT DO NOTHING',
-                (user_id,)
-            )
-        self.conn.commit()
-
-    def save_meal(self, user_id: int, description: str, analysis: dict):
+    def save_meal(self, telegram_id: int, description: str, analysis: dict):
         """Save a meal to the database."""
-        self.ensure_user_exists(user_id)
-        
-        with self.conn.cursor() as cur:
-            cur.execute('''
-                INSERT INTO meals (user_id, description, calories, protein, fat, carbs)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (user_id, description, analysis['calories'], analysis['protein'],
-                analysis['fat'], analysis['carbs']))
-        self.conn.commit()
+        session = self.Session()
+        try:
+            user = self._get_or_create_user(session, telegram_id)
+            
+            meal = Meal(
+                user_id=user.id,
+                description=description,
+                calories=analysis['calories'],
+                protein=analysis['protein'],
+                fat=analysis['fat'],
+                carbs=analysis['carbs']
+            )
+            
+            session.add(meal)
+            session.commit()
+            logger.info(f"Saved meal for user {telegram_id}: {description}")
+            
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving meal for user {telegram_id}: {str(e)}")
+            raise
+        finally:
+            session.close()
 
-    def get_today_meals(self, user_id: int):
-        """Get all meals for today."""
-        today = datetime.now(timezone.utc).date()
-        
-        with self.conn.cursor() as cur:
-            cur.execute('''
-                SELECT description, calories, protein, fat, carbs
-                FROM meals
-                WHERE user_id = %s
-                AND DATE(created_at AT TIME ZONE 'UTC') = %s
-                ORDER BY created_at DESC
-            ''', (user_id, today))
-            return cur.fetchall()
-
-    def set_user_goals(self, user_id: int, goals: dict):
-        """Set user's nutrition goals."""
-        self.ensure_user_exists(user_id)
-        
-        with self.conn.cursor() as cur:
-            cur.execute('''
-                INSERT INTO goals (user_id, calories, protein, fat, carbs)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (user_id) DO UPDATE
-                SET calories = %s, protein = %s, fat = %s, carbs = %s,
-                    updated_at = CURRENT_TIMESTAMP
-            ''', (user_id, goals['calories'], goals['protein'],
-                goals['fat'], goals['carbs'],
-                goals['calories'], goals['protein'],
-                goals['fat'], goals['carbs']))
-        self.conn.commit()
-
-    def get_user_progress(self, user_id: int):
-        """Get user's progress for today."""
-        today = datetime.now(timezone.utc).date()
-        
-        with self.conn.cursor() as cur:
-            # Get today's meals
-            cur.execute('''
-                SELECT calories, protein, fat, carbs
-                FROM meals
-                WHERE user_id = %s
-                AND DATE(created_at AT TIME ZONE 'UTC') = %s
-            ''', (user_id, today))
-            meals = cur.fetchall()
+    def get_user_progress(self, telegram_id: int) -> dict:
+        """Get user's current progress towards their goals."""
+        session = self.Session()
+        try:
+            user = self._get_or_create_user(session, telegram_id)
             
             # Get user's goals
-            cur.execute('''
-                SELECT calories, protein, fat, carbs
-                FROM goals
-                WHERE user_id = %s
-            ''', (user_id,))
-            goals = cur.fetchone()
-            
+            goals = session.query(UserGoals).filter_by(user_id=user.id).first()
             if not goals:
                 return None
             
+            # Get today's meals
+            today = datetime.utcnow().date()
+            meals = session.query(Meal).filter(
+                and_(
+                    Meal.user_id == user.id,
+                    func.date(Meal.created_at) == today
+                )
+            ).all()
+            
             # Calculate totals
-            totals = {
-                'calories': sum(meal[0] for meal in meals),
-                'protein': sum(meal[1] for meal in meals),
-                'fat': sum(meal[2] for meal in meals),
-                'carbs': sum(meal[3] for meal in meals),
-                'goal_calories': goals[0],
-                'goal_protein': goals[1],
-                'goal_fat': goals[2],
-                'goal_carbs': goals[3]
+            total_calories = sum(meal.calories for meal in meals)
+            total_protein = sum(meal.protein for meal in meals)
+            total_fat = sum(meal.fat for meal in meals)
+            total_carbs = sum(meal.carbs for meal in meals)
+            
+            progress = {
+                'calories': total_calories,
+                'protein': total_protein,
+                'fat': total_fat,
+                'carbs': total_carbs,
+                'goal_calories': goals.calories,
+                'goal_protein': goals.protein,
+                'goal_fat': goals.fat,
+                'goal_carbs': goals.carbs
             }
             
-            return totals 
-
-    def get_weekly_summary(self, user_id: int) -> list:
-        """Get daily calorie intake for the last 7 days."""
-        try:
-            with self.conn.cursor() as cur:
-                cur.execute("""
-                    SELECT 
-                        DATE(created_at) as date,
-                        SUM(calories) as total_calories
-                    FROM meals
-                    WHERE user_id = %s
-                    AND created_at >= CURRENT_DATE - INTERVAL '7 days'
-                    GROUP BY DATE(created_at)
-                    ORDER BY date DESC
-                """, (user_id,))
-                return cur.fetchall()
+            logger.info(f"Retrieved progress for user {telegram_id}: {progress}")
+            return progress
+            
         except Exception as e:
-            logger.error(f"Error getting weekly summary for user {user_id}: {str(e)}")
-            return [] 
+            logger.error(f"Error retrieving progress for user {telegram_id}: {str(e)}")
+            raise
+        finally:
+            session.close()
+
+    def get_today_meals(self, telegram_id: int) -> list:
+        """Get all meals logged today."""
+        session = self.Session()
+        try:
+            user = self._get_or_create_user(session, telegram_id)
+            
+            today = datetime.utcnow().date()
+            meals = session.query(Meal).filter(
+                and_(
+                    Meal.user_id == user.id,
+                    func.date(Meal.created_at) == today
+                )
+            ).order_by(Meal.created_at).all()
+            
+            result = [
+                (meal.description, meal.calories, meal.protein, meal.fat, meal.carbs)
+                for meal in meals
+            ]
+            
+            logger.info(f"Retrieved {len(result)} meals for user {telegram_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error retrieving today's meals for user {telegram_id}: {str(e)}")
+            raise
+        finally:
+            session.close()
+
+    def get_weekly_summary(self, telegram_id: int) -> list:
+        """Get weekly calorie summary with goal achievement information."""
+        session = self.Session()
+        try:
+            user = self._get_or_create_user(session, telegram_id)
+            
+            # Get user's goals
+            goals = session.query(UserGoals).filter_by(user_id=user.id).first()
+            if not goals:
+                return None
+            
+            # Get date range (last 7 days)
+            end_date = datetime.utcnow().date()
+            start_date = end_date - timedelta(days=6)
+            
+            # Query daily totals with all nutritional values
+            daily_totals = session.query(
+                func.date(Meal.created_at).label('date'),
+                func.sum(Meal.calories).label('total_calories'),
+                func.sum(Meal.protein).label('total_protein'),
+                func.sum(Meal.fat).label('total_fat'),
+                func.sum(Meal.carbs).label('total_carbs')
+            ).filter(
+                and_(
+                    Meal.user_id == user.id,
+                    func.date(Meal.created_at) >= start_date,
+                    func.date(Meal.created_at) <= end_date
+                )
+            ).group_by(
+                func.date(Meal.created_at)
+            ).order_by(
+                desc(func.date(Meal.created_at))
+            ).all()
+            
+            # Format results with goal achievement information
+            result = []
+            for day in daily_totals:
+                day_data = {
+                    'date': day.date,
+                    'calories': day.total_calories or 0,
+                    'protein': day.total_protein or 0,
+                    'fat': day.total_fat or 0,
+                    'carbs': day.total_carbs or 0,
+                    'goal_calories': goals.calories,
+                    'goal_protein': goals.protein,
+                    'goal_fat': goals.fat,
+                    'goal_carbs': goals.carbs,
+                    'reached_goals': {
+                        'calories': (day.total_calories or 0) >= goals.calories,
+                        'protein': (day.total_protein or 0) >= goals.protein,
+                        'fat': (day.total_fat or 0) >= goals.fat,
+                        'carbs': (day.total_carbs or 0) >= goals.carbs
+                    }
+                }
+                result.append(day_data)
+            
+            logger.info(f"Retrieved weekly summary for user {telegram_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error retrieving weekly summary for user {telegram_id}: {str(e)}")
+            raise
+        finally:
+            session.close() 
