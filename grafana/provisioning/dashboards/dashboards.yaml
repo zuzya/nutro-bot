@@ -3,10 +3,10 @@ apiVersion: 1
 providers:
   - name: 'Nutro Bot'
     orgId: 1
-    folder: ''
+    folder: 'Nutro Bot Metrics'
     type: file
     disableDeletion: false
     editable: true
     options:
-      path: /etc/grafana/provisioning/dashboards
-      foldersFromFilesStructure: true 
+      path: /etc/grafana/provisioning/dashboards/nutro-bot-dashboard.json
+      foldersFromFilesStructure: false 

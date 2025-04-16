@@ -1,13 +1,11 @@
 import logging
 from pythonjsonlogger import jsonlogger
-from opentelemetry import trace, metrics
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from prometheus_client import start_http_server
+from prometheus_client import start_http_server, Counter
 import os
 
 # Настройка JSON логирования
@@ -37,32 +35,23 @@ def setup_tracing():
 
 # Настройка метрик
 def setup_metrics():
-    # Создаем reader для Prometheus
-    reader = PrometheusMetricReader()
-    provider = MeterProvider(resource=Resource.create({"service.name": "nutro-bot"}), metric_readers=[reader])
-    metrics.set_meter_provider(provider)
-    meter = metrics.get_meter(__name__)
-    
     # Запускаем HTTP сервер для Prometheus
     start_http_server(port=8000)
     
     # Создаем основные метрики
-    meal_counter = meter.create_counter(
-        name="meals_added",
-        description="Number of meals added",
-        unit="1"
+    meal_counter = Counter(
+        'meals_added_total',
+        'Number of meals added'
     )
     
-    goal_counter = meter.create_counter(
-        name="goals_set",
-        description="Number of goals set",
-        unit="1"
+    goal_counter = Counter(
+        'goals_set_total',
+        'Number of goals set'
     )
     
-    user_counter = meter.create_counter(
-        name="active_users",
-        description="Number of active users",
-        unit="1"
+    user_counter = Counter(
+        'active_users_total',
+        'Number of active users'
     )
     
     return meal_counter, goal_counter, user_counter

@@ -111,8 +111,8 @@ class FoodTrackerBot:
             self.logger.info(f"Set custom goals for user {user.id}: {goals}")
             
             # Update metrics
-            self.metrics['goal_counter'].add(1)
-            self.metrics['user_counter'].add(1)
+            self.metrics['goal_counter'].inc()
+            self.metrics['user_counter'].inc()
             
             # Clear the state
             del self.user_states[user.id]
@@ -210,8 +210,8 @@ class FoodTrackerBot:
             self.db.save_meal(user.id, description, analysis)
             
             # Update metrics
-            self.metrics['meal_counter'].add(1)
-            self.metrics['user_counter'].add(1)
+            self.metrics['meal_counter'].inc()
+            self.metrics['user_counter'].inc()
             
             # Get current progress and goals
             progress_data = self.db.get_user_progress(user.id)
