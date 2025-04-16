@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from database import Database
 from food_analyzer import FoodAnalyzer
 from goals_manager import GoalsManager
+from telemetry import init_telemetry
 
 # Load environment variables
 load_dotenv()
@@ -38,6 +39,11 @@ logger.info(f"DB_PORT: {os.getenv('DB_PORT')}")
 class FoodTrackerBot:
     def __init__(self):
         """Initialize the bot."""
+        # Initialize telemetry
+        self.telemetry = init_telemetry()
+        self.logger = self.telemetry['logger']
+        self.metrics = self.telemetry['metrics']
+        
         # Initialize the bot with your token
         self.application = Application.builder().token(os.getenv('TELEGRAM_TOKEN')).build()
         
@@ -64,7 +70,7 @@ class FoodTrackerBot:
         
         # Dictionary to track user states
         self.user_states = {}
-        logger.info("Bot initialized with all services")
+        self.logger.info("Bot initialized with all services")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages."""
@@ -102,7 +108,11 @@ class FoodTrackerBot:
             
             # Save the goals
             self.db.set_user_goals(user.id, goals)
-            logger.info(f"Set custom goals for user {user.id}: {goals}")
+            self.logger.info(f"Set custom goals for user {user.id}: {goals}")
+            
+            # Update metrics
+            self.metrics['goal_counter'].add(1)
+            self.metrics['user_counter'].add(1)
             
             # Clear the state
             del self.user_states[user.id]
@@ -126,7 +136,7 @@ class FoodTrackerBot:
             error_message = f'⚠️ {str(e)}\n\nПожалуйста, введите значения в формате:\nкалории белки жиры углеводы\nНапример: 2000 150 60 200'
             await update.message.reply_text(error_message)
         except Exception as e:
-            logger.error(f"Error setting custom goals for user {user.id}: {str(e)}")
+            self.logger.error(f"Error setting custom goals for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -136,12 +146,12 @@ class FoodTrackerBot:
     async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Show the main menu with all available options."""
         user = update.effective_user
-        logger.info(f"Showing main menu for user {user.id}")
+        self.logger.info(f"Showing main menu for user {user.id}")
         
         # Get current progress
         try:
             progress_data = self.db.get_user_progress(user.id)
-            logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
+            self.logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
             
             if progress_data:
                 progress_text = (
@@ -154,7 +164,7 @@ class FoodTrackerBot:
             else:
                 progress_text = '📝 Вы еще не установили цели по питанию.\n\n'
         except Exception as e:
-            logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
+            self.logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
             progress_text = '⚠️ Не удалось получить информацию о вашем прогрессе.\n\n'
         
         keyboard = [
@@ -187,21 +197,25 @@ class FoodTrackerBot:
         """Handle meal description input."""
         user = update.effective_user
         description = update.message.text
-        logger.info(f"User {user.id} submitted meal description: {description}")
+        self.logger.info(f"User {user.id} submitted meal description: {description}")
         
         try:
             # Analyze the meal using OpenAI
-            logger.info(f"Starting meal analysis for user {user.id}")
+            self.logger.info(f"Starting meal analysis for user {user.id}")
             analysis = await self.food_analyzer.analyze_meal(description)
-            logger.info(f"Meal analysis completed for user {user.id}: {analysis}")
+            self.logger.info(f"Meal analysis completed for user {user.id}: {analysis}")
             
             # Save to database
-            logger.info(f"Saving meal to database for user {user.id}")
+            self.logger.info(f"Saving meal to database for user {user.id}")
             self.db.save_meal(user.id, description, analysis)
+            
+            # Update metrics
+            self.metrics['meal_counter'].add(1)
+            self.metrics['user_counter'].add(1)
             
             # Get current progress and goals
             progress_data = self.db.get_user_progress(user.id)
-            logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
+            self.logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
             
             # Calculate remaining values
             if progress_data:
@@ -211,10 +225,10 @@ class FoodTrackerBot:
                     'fat': progress_data['goal_fat'] - progress_data['fat'],
                     'carbs': progress_data['goal_carbs'] - progress_data['carbs']
                 }
-                logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
+                self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             else:
                 remaining = None
-                logger.info(f"No progress data available for user {user.id}")
+                self.logger.info(f"No progress data available for user {user.id}")
             
             # Get feedback from LLM
             feedback_prompt = (
@@ -227,9 +241,9 @@ class FoodTrackerBot:
                 "Будьте краткими и ободряющими."
             )
             
-            logger.info(f"Requesting feedback from LLM for user {user.id}")
+            self.logger.info(f"Requesting feedback from LLM for user {user.id}")
             feedback = await self.food_analyzer.get_feedback(feedback_prompt)
-            logger.info(f"Received feedback from LLM for user {user.id}: {feedback}")
+            self.logger.info(f"Received feedback from LLM for user {user.id}: {feedback}")
             
             # Prepare response
             response = (
@@ -265,10 +279,10 @@ class FoodTrackerBot:
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(response, reply_markup=reply_markup)
-            logger.info(f"Response sent to user {user.id}")
+            self.logger.info(f"Response sent to user {user.id}")
             
         except Exception as e:
-            logger.error(f"Error processing meal for user {user.id}: {str(e)}")
+            self.logger.error(f"Error processing meal for user {user.id}: {str(e)}")
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text('⚠️ К сожалению, произошла ошибка при обработке вашего приема пищи. Пожалуйста, попробуйте еще раз.', reply_markup=reply_markup)
@@ -276,19 +290,19 @@ class FoodTrackerBot:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send a message when the command /start is issued."""
         user = update.effective_user
-        logger.info(f"User {user.id} ({user.first_name}) started the bot")
+        self.logger.info(f"User {user.id} ({user.first_name}) started the bot")
         
         await self.show_main_menu(update, context)
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send a message when the command /help is issued."""
         user = update.effective_user
-        logger.info(f"User {user.id} requested help")
+        self.logger.info(f"User {user.id} requested help")
         
         # Get current progress
         try:
             progress_data = self.db.get_user_progress(user.id)
-            logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
+            self.logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
             
             if progress_data:
                 progress_text = (
@@ -301,7 +315,7 @@ class FoodTrackerBot:
             else:
                 progress_text = '\n📝 Вы еще не установили цели по питанию.\n'
         except Exception as e:
-            logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
+            self.logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
             progress_text = '\n⚠️ Не удалось получить информацию о вашем прогрессе.\n'
         
         keyboard = [
@@ -332,7 +346,7 @@ class FoodTrackerBot:
         """Handle button callbacks."""
         query = update.callback_query
         user = update.effective_user
-        logger.info(f"User {user.id} pressed button: {query.data}")
+        self.logger.info(f"User {user.id} pressed button: {query.data}")
         
         await query.answer()
         
@@ -355,7 +369,7 @@ class FoodTrackerBot:
     async def handle_goal_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, goal_type: str):
         """Handle goal selection."""
         user = update.effective_user
-        logger.info(f"User {user.id} selected goal type: {goal_type}")
+        self.logger.info(f"User {user.id} selected goal type: {goal_type}")
         
         if goal_type == 'custom':
             # Set state to waiting for custom goals input
@@ -375,7 +389,7 @@ class FoodTrackerBot:
             # Set predefined goals
             goals = self.goals_manager.get_predefined_goals(goal_type)
             self.db.set_user_goals(user.id, goals)
-            logger.info(f"Set goals for user {user.id}: {goals}")
+            self.logger.info(f"Set goals for user {user.id}: {goals}")
             
             response = (
                 f'✅ Цели установлены!\n\n'
@@ -389,10 +403,10 @@ class FoodTrackerBot:
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
-            logger.info(f"Sent goal confirmation to user {user.id}")
+            self.logger.info(f"Sent goal confirmation to user {user.id}")
             
         except Exception as e:
-            logger.error(f"Error setting goals for user {user.id}: {str(e)}")
+            self.logger.error(f"Error setting goals for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -401,7 +415,7 @@ class FoodTrackerBot:
     async def set_goals(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /set_goals command."""
         user = update.effective_user
-        logger.info(f"User {user.id} requested to set goals")
+        self.logger.info(f"User {user.id} requested to set goals")
         
         keyboard = [
             [
@@ -427,7 +441,7 @@ class FoodTrackerBot:
     async def add_meal(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /add_meal command."""
         user = update.effective_user
-        logger.info(f"User {user.id} requested to add a meal")
+        self.logger.info(f"User {user.id} requested to add a meal")
         
         keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -444,11 +458,11 @@ class FoodTrackerBot:
     async def today(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /today command."""
         user = update.effective_user
-        logger.info(f"User {user.id} requested today's meals")
+        self.logger.info(f"User {user.id} requested today's meals")
         
         try:
             meals = self.db.get_today_meals(user.id)
-            logger.info(f"Retrieved {len(meals)} meals for user {user.id}")
+            self.logger.info(f"Retrieved {len(meals)} meals for user {user.id}")
             
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -502,10 +516,10 @@ class FoodTrackerBot:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
             else:
                 await update.message.reply_text(response, reply_markup=reply_markup)
-            logger.info(f"Today's meals sent to user {user.id}")
+            self.logger.info(f"Today's meals sent to user {user.id}")
             
         except Exception as e:
-            logger.error(f"Error retrieving today's meals for user {user.id}: {str(e)}")
+            self.logger.error(f"Error retrieving today's meals for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при получении ваших приемов пищи. Пожалуйста, попробуйте еще раз.'
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -517,11 +531,11 @@ class FoodTrackerBot:
     async def weekly(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /weekly command."""
         user = update.effective_user
-        logger.info(f"User {user.id} requested weekly summary")
+        self.logger.info(f"User {user.id} requested weekly summary")
         
         try:
             weekly_data = self.db.get_weekly_summary(user.id)
-            logger.info(f"Retrieved weekly data for user {user.id}: {weekly_data}")
+            self.logger.info(f"Retrieved weekly data for user {user.id}: {weekly_data}")
             
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -604,10 +618,10 @@ class FoodTrackerBot:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
             else:
                 await update.message.reply_text(response, reply_markup=reply_markup)
-            logger.info(f"Weekly summary sent to user {user.id}")
+            self.logger.info(f"Weekly summary sent to user {user.id}")
             
         except Exception as e:
-            logger.error(f"Error retrieving weekly summary for user {user.id}: {str(e)}")
+            self.logger.error(f"Error retrieving weekly summary for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при получении вашей недельной статистики. Пожалуйста, попробуйте еще раз.'
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -619,7 +633,7 @@ class FoodTrackerBot:
     async def recommendations(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /recommendations command."""
         user = update.effective_user
-        logger.info(f"User {user.id} requested recommendations")
+        self.logger.info(f"User {user.id} requested recommendations")
         
         try:
             # Get current progress
@@ -628,7 +642,7 @@ class FoodTrackerBot:
                 keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 message = '📝 Пожалуйста, сначала установите цели по питанию, чтобы получить персонализированные рекомендации.'
-                logger.info(f"No goals set for user {user.id}, cannot generate recommendations")
+                self.logger.info(f"No goals set for user {user.id}, cannot generate recommendations")
                 if is_callback:
                     await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
                 else:
@@ -642,12 +656,12 @@ class FoodTrackerBot:
                 'fat': progress_data['goal_fat'] - progress_data['fat'],
                 'carbs': progress_data['goal_carbs'] - progress_data['carbs']
             }
-            logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
+            self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             
             # Get recommendations from LLM
-            logger.info(f"Requesting recommendations from LLM for user {user.id}")
+            self.logger.info(f"Requesting recommendations from LLM for user {user.id}")
             recommendations = await self.food_analyzer.get_recommendations(progress_data, remaining)
-            logger.info(f"Received recommendations from LLM for user {user.id}: {recommendations}")
+            self.logger.info(f"Received recommendations from LLM for user {user.id}: {recommendations}")
             
             # Prepare response
             response = (
@@ -667,10 +681,10 @@ class FoodTrackerBot:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
             else:
                 await update.message.reply_text(response, reply_markup=reply_markup)
-            logger.info(f"Recommendations sent to user {user.id}")
+            self.logger.info(f"Recommendations sent to user {user.id}")
             
         except Exception as e:
-            logger.error(f"Error generating recommendations for user {user.id}: {str(e)}")
+            self.logger.error(f"Error generating recommendations for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при генерации рекомендаций. Пожалуйста, попробуйте еще раз.'
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)

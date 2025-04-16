@@ -1,7 +1,9 @@
 import os
 import logging
-from sqlalchemy import create_engine, func, and_, desc
+import time
+from sqlalchemy import create_engine, func, and_, desc, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import OperationalError
 from datetime import datetime, timedelta
 from models import Base, User, UserGoals, Meal
 from dotenv import load_dotenv
@@ -11,8 +13,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class Database:
-    def __init__(self):
-        """Initialize database connection."""
+    def __init__(self, max_retries=5, retry_delay=5):
+        """Initialize database connection with retry logic."""
         self.db_user = os.getenv('DB_USER')
         self.db_password = os.getenv('DB_PASSWORD')
         self.db_name = os.getenv('DB_NAME')
@@ -22,13 +24,37 @@ class Database:
         # Create database URL
         self.db_url = f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
         
-        # Create engine and session
-        self.engine = create_engine(self.db_url)
-        self.Session = sessionmaker(bind=self.engine)
+        # Initialize connection with retries
+        self.engine = None
+        self.Session = None
+        self._initialize_connection(max_retries, retry_delay)
         
         # Create tables
         Base.metadata.create_all(self.engine)
         logger.info("Database initialized and tables created")
+
+    def _initialize_connection(self, max_retries, retry_delay):
+        """Initialize database connection with retry logic."""
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Attempting to connect to database (attempt {attempt + 1}/{max_retries})")
+                self.engine = create_engine(self.db_url)
+                self.Session = sessionmaker(bind=self.engine)
+                
+                # Test the connection
+                with self.Session() as session:
+                    session.execute(text("SELECT 1"))
+                logger.info("Successfully connected to database")
+                return
+                
+            except OperationalError as e:
+                logger.warning(f"Database connection failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error("Failed to connect to database after all retries")
+                    raise
 
     def _get_or_create_user(self, session, telegram_id):
         """Get existing user or create new one."""
