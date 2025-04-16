@@ -52,7 +52,7 @@ class FoodTrackerBot:
         self.application.add_handler(CommandHandler("menu", self.show_main_menu))
         
         # Add message handler for meal descriptions
-        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_meal_description))
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
         # Add callback query handler for buttons
         self.application.add_handler(CallbackQueryHandler(self.button_callback))
@@ -61,7 +61,77 @@ class FoodTrackerBot:
         self.db = Database()
         self.food_analyzer = FoodAnalyzer()
         self.goals_manager = GoalsManager()
+        
+        # Dictionary to track user states
+        self.user_states = {}
         logger.info("Bot initialized with all services")
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle incoming text messages."""
+        user = update.effective_user
+        text = update.message.text
+        
+        # Check if user is in custom goals input state
+        if user.id in self.user_states and self.user_states[user.id] == 'waiting_for_custom_goals':
+            await self.handle_custom_goals_input(update, context)
+        else:
+            # Handle as meal description
+            await self.handle_meal_description(update, context)
+
+    async def handle_custom_goals_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle custom goals input."""
+        user = update.effective_user
+        text = update.message.text
+        
+        try:
+            # Parse the input (format: calories protein fat carbs)
+            parts = text.split()
+            if len(parts) != 4:
+                raise ValueError("Неверный формат. Введите значения через пробел: калории белки жиры углеводы")
+            
+            goals = {
+                'calories': int(parts[0]),
+                'protein': int(parts[1]),
+                'fat': int(parts[2]),
+                'carbs': int(parts[3])
+            }
+            
+            # Validate the goals
+            if any(value <= 0 for value in goals.values()):
+                raise ValueError("Все значения должны быть положительными числами")
+            
+            # Save the goals
+            self.db.set_user_goals(user.id, goals)
+            logger.info(f"Set custom goals for user {user.id}: {goals}")
+            
+            # Clear the state
+            del self.user_states[user.id]
+            
+            # Show confirmation and main menu
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            response = (
+                f'✅ Цели установлены!\n\n'
+                f'📊 Ваши цели по питанию:\n'
+                f'• Калории: {goals["calories"]}\n'
+                f'• Белки: {goals["protein"]}г\n'
+                f'• Жиры: {goals["fat"]}г\n'
+                f'• Углеводы: {goals["carbs"]}г'
+            )
+            
+            await update.message.reply_text(response, reply_markup=reply_markup)
+            
+        except ValueError as e:
+            error_message = f'⚠️ {str(e)}\n\nПожалуйста, введите значения в формате:\nкалории белки жиры углеводы\nНапример: 2000 150 60 200'
+            await update.message.reply_text(error_message)
+        except Exception as e:
+            logger.error(f"Error setting custom goals for user {user.id}: {str(e)}")
+            error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text(error_message, reply_markup=reply_markup)
+            del self.user_states[user.id]
 
     async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Show the main menu with all available options."""
@@ -289,12 +359,17 @@ class FoodTrackerBot:
         logger.info(f"User {user.id} selected goal type: {goal_type}")
         
         if goal_type == 'custom':
+            # Set state to waiting for custom goals input
+            self.user_states[user.id] = 'waiting_for_custom_goals'
+            
             message = (
-                'Enter your goals in the format:\n'
-                'calories protein fat carbs\n'
-                'For example: 2000 150 60 200'
+                'Введите ваши цели в формате:\n'
+                'калории белки жиры углеводы\n\n'
+                'Например: 2000 150 60 200'
             )
-            await update.callback_query.message.reply_text(message)
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
             return
         
         try:
@@ -304,20 +379,25 @@ class FoodTrackerBot:
             logger.info(f"Set goals for user {user.id}: {goals}")
             
             response = (
-                f'Goals set!\n\n'
-                f'Calories: {goals["calories"]}\n'
-                f'Protein: {goals["protein"]}g\n'
-                f'Fat: {goals["fat"]}g\n'
-                f'Carbs: {goals["carbs"]}g'
+                f'✅ Цели установлены!\n\n'
+                f'📊 Ваши цели по питанию:\n'
+                f'• Калории: {goals["calories"]}\n'
+                f'• Белки: {goals["protein"]}г\n'
+                f'• Жиры: {goals["fat"]}г\n'
+                f'• Углеводы: {goals["carbs"]}г'
             )
-            await update.callback_query.message.reply_text(response)
+            
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
             logger.info(f"Sent goal confirmation to user {user.id}")
             
         except Exception as e:
             logger.error(f"Error setting goals for user {user.id}: {str(e)}")
-            await update.callback_query.message.reply_text(
-                'Sorry, there was an error setting your goals. Please try again.'
-            )
+            error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.callback_query.message.edit_text(error_message, reply_markup=reply_markup)
 
     async def set_goals(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /set_goals command."""
@@ -382,11 +462,42 @@ class FoodTrackerBot:
                     await update.message.reply_text(message, reply_markup=reply_markup)
                 return
             
+            # Get current progress for totals
+            progress_data = self.db.get_user_progress(user.id)
+            
             response = '🍽 Сегодняшние приемы пищи:\n\n'
-            for meal in meals:
-                response += f'• {meal[0]}\n'
-                response += f'  Калории: {meal[1]}\n'
-                response += f'  Б/Ж/У: {meal[2]}/{meal[3]}/{meal[4]}г\n\n'
+            
+            # Add each meal with clear formatting
+            for i, meal in enumerate(meals, 1):
+                response += f'🍴 Прием пищи #{i}\n'
+                response += f'📝 {meal[0]}\n'
+                response += f'📊 Питательная ценность:\n'
+                response += f'   • Калории: {meal[1]}\n'
+                response += f'   • Белки: {meal[2]}г\n'
+                response += f'   • Жиры: {meal[3]}г\n'
+                response += f'   • Углеводы: {meal[4]}г\n\n'
+            
+            # Add daily totals if goals are set
+            if progress_data:
+                response += '📈 Дневные итоги:\n'
+                response += f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
+                response += f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
+                response += f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
+                response += f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
+                
+                # Calculate and show remaining values
+                remaining = {
+                    'calories': progress_data['goal_calories'] - progress_data['calories'],
+                    'protein': progress_data['goal_protein'] - progress_data['protein'],
+                    'fat': progress_data['goal_fat'] - progress_data['fat'],
+                    'carbs': progress_data['goal_carbs'] - progress_data['carbs']
+                }
+                
+                response += '🎯 Осталось на сегодня:\n'
+                response += f'• Калории: {remaining["calories"]}\n'
+                response += f'• Белки: {remaining["protein"]}г\n'
+                response += f'• Жиры: {remaining["fat"]}г\n'
+                response += f'• Углеводы: {remaining["carbs"]}г'
             
             if is_callback:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
@@ -533,7 +644,7 @@ def main():
     application.add_handler(CommandHandler("recommendations", bot.recommendations))
     
     # Add message handler for meal descriptions
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_meal_description))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(bot.button_callback))
