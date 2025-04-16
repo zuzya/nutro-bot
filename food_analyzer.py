@@ -10,20 +10,20 @@ logger = logging.getLogger(__name__)
 class FoodAnalyzer:
     def __init__(self):
         self.client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        self.system_prompt = """You are a nutrition expert. Your task is to analyze food descriptions and provide accurate nutritional information.
-        For each meal description, provide:
-        1. Total calories
-        2. Protein in grams
-        3. Fat in grams
-        4. Carbohydrates in grams
+        self.system_prompt = """Вы - эксперт по питанию. Ваша задача - анализировать описания еды и предоставлять точную информацию о питательной ценности.
+        Для каждого описания еды предоставьте:
+        1. Общее количество калорий
+        2. Белки в граммах
+        3. Жиры в граммах
+        4. Углеводы в граммах
         
-        Be as accurate as possible in your estimates. Consider typical portion sizes and common ingredients.
-        Return the response in JSON format with the following structure:
+        Будьте максимально точны в своих оценках. Учитывайте типичные размеры порций и распространенные ингредиенты.
+        Возвращайте ответ в формате JSON со следующей структурой:
         {
-            "calories": number,
-            "protein": number,
-            "fat": number,
-            "carbs": number
+            "calories": число,
+            "protein": число,
+            "fat": число,
+            "carbs": число
         }
         """
 
@@ -65,7 +65,7 @@ class FoodAnalyzer:
             response = await self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a helpful nutrition assistant. Provide brief, friendly feedback about meals in the context of daily goals. Be encouraging and practical."},
+                    {"role": "system", "content": "Вы - помощник по питанию. Давайте краткие, дружелюбные отзывы о приемах пищи в контексте дневных целей. Будьте ободряющими и практичными. Отвечайте на русском языке."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
@@ -78,25 +78,25 @@ class FoodAnalyzer:
             
         except Exception as e:
             logger.error(f"Error generating feedback: {str(e)}")
-            return "I couldn't generate specific feedback at the moment, but your meal has been logged successfully!"
+            return "К сожалению, я не смог сгенерировать конкретный отзыв в данный момент, но ваш прием пищи был успешно сохранен!"
 
     async def get_recommendations(self, progress_data: dict, remaining: dict) -> str:
         """Generate personalized nutrition recommendations using the LLM."""
         try:
             prompt = (
-                f"User's current daily nutrition:\n"
-                f"Calories: {progress_data['calories']}/{progress_data['goal_calories']}\n"
-                f"Protein: {progress_data['protein']}/{progress_data['goal_protein']}g\n"
-                f"Fat: {progress_data['fat']}/{progress_data['goal_fat']}g\n"
-                f"Carbs: {progress_data['carbs']}/{progress_data['goal_carbs']}g\n\n"
-                f"Remaining for today:\n"
-                f"Calories: {remaining['calories']}\n"
-                f"Protein: {remaining['protein']}g\n"
-                f"Fat: {remaining['fat']}g\n"
-                f"Carbs: {remaining['carbs']}g\n\n"
-                "Provide 2-3 specific, actionable recommendations for the user's next meal or snacks "
-                "based on their remaining daily targets. Focus on practical suggestions that would help "
-                "them meet their goals. Keep it concise and friendly."
+                f"Текущее дневное питание пользователя:\n"
+                f"Калории: {progress_data['calories']}/{progress_data['goal_calories']}\n"
+                f"Белки: {progress_data['protein']}/{progress_data['goal_protein']}г\n"
+                f"Жиры: {progress_data['fat']}/{progress_data['goal_fat']}г\n"
+                f"Углеводы: {progress_data['carbs']}/{progress_data['goal_carbs']}г\n\n"
+                f"Осталось на сегодня:\n"
+                f"Калории: {remaining['calories']}\n"
+                f"Белки: {remaining['protein']}г\n"
+                f"Жиры: {remaining['fat']}г\n"
+                f"Углеводы: {remaining['carbs']}г\n\n"
+                "Предоставьте 2-3 конкретных, практичных рекомендации для следующего приема пищи или перекуса "
+                "на основе оставшихся дневных целей. Сосредоточьтесь на практических предложениях, которые помогут "
+                "достичь целей. Будьте краткими и дружелюбными. Отвечайте на русском языке."
             )
             
             logger.info(f"Generating recommendations with prompt: {prompt}")
@@ -104,7 +104,7 @@ class FoodAnalyzer:
             response = await self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a helpful nutrition assistant. Provide specific, actionable recommendations based on the user's current nutrition status and remaining daily targets."},
+                    {"role": "system", "content": "Вы - помощник по питанию. Предоставляйте конкретные, практичные рекомендации на основе текущего состояния питания пользователя и оставшихся дневных целей. Отвечайте на русском языке."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
@@ -117,4 +117,4 @@ class FoodAnalyzer:
             
         except Exception as e:
             logger.error(f"Error generating recommendations: {str(e)}")
-            return "I couldn't generate specific recommendations at the moment. Please try again later!" 
+            return "К сожалению, я не смог сгенерировать конкретные рекомендации в данный момент. Пожалуйста, попробуйте позже!" 

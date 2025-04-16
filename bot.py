@@ -75,45 +75,38 @@ class FoodTrackerBot:
             
             if progress_data:
                 progress_text = (
-                    f'Your current progress:\n'
-                    f'Calories: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
-                    f'Protein: {progress_data["protein"]}/{progress_data["goal_protein"]}g\n'
-                    f'Fat: {progress_data["fat"]}/{progress_data["goal_fat"]}g\n'
-                    f'Carbs: {progress_data["carbs"]}/{progress_data["goal_carbs"]}g\n\n'
+                    f'📊 Ваш текущий прогресс:\n\n'
+                    f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
+                    f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
+                    f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
+                    f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
                 )
             else:
-                progress_text = 'You haven\'t set any goals yet.\n\n'
+                progress_text = '📝 Вы еще не установили цели по питанию.\n\n'
         except Exception as e:
             logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
-            progress_text = 'Unable to retrieve your progress at the moment.\n\n'
+            progress_text = '⚠️ Не удалось получить информацию о вашем прогрессе.\n\n'
         
         keyboard = [
             [
-                InlineKeyboardButton("Set Goals", callback_data='set_goals'),
-                InlineKeyboardButton("Add Meal", callback_data='add_meal'),
+                InlineKeyboardButton("📅 Сегодняшние приемы пищи", callback_data='today'),
+                InlineKeyboardButton("📈 Недельная статистика", callback_data='weekly'),
             ],
             [
-                InlineKeyboardButton("Today's Meals", callback_data='today'),
-                InlineKeyboardButton("Weekly Summary", callback_data='weekly'),
-            ],
-            [
-                InlineKeyboardButton("Get Recommendations", callback_data='recommendations'),
+                InlineKeyboardButton("💡 Получить рекомендации", callback_data='recommendations'),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         message = (
-            f'Hi {user.first_name}! I will help you track your nutrition.\n\n'
+            f'👋 Привет, {user.first_name}! Я помогу вам отслеживать ваше питание.\n\n'
             f'{progress_text}'
-            'What would you like to do?\n\n'
-            'Available commands:\n'
-            '/set_goals - Set nutrition goals\n'
-            '/add_meal - Add a meal\n'
-            '/today - View today\'s meals\n'
-            '/weekly - View weekly calorie summary\n'
-            '/recommendations - Get personalized nutrition advice\n'
-            '/menu - Show this menu\n'
-            '/help - Show help'
+            'Что бы вы хотели сделать?\n\n'
+            'Доступные команды:\n'
+            '/set_goals - Установить цели по питанию\n'
+            '/menu - Показать это меню\n'
+            '/help - Показать справку\n\n'
+            'Чтобы добавить прием пищи, просто напишите, что вы съели.'
         )
         
         if is_callback:
@@ -156,13 +149,13 @@ class FoodTrackerBot:
             
             # Get feedback from LLM
             feedback_prompt = (
-                f"User just logged a meal: {description}\n"
-                f"Nutritional content: {analysis}\n"
-                f"Current daily totals: {progress_data if progress_data else 'No goals set'}\n"
-                f"Remaining daily targets: {remaining if remaining else 'N/A'}\n\n"
-                "Provide a brief, friendly feedback about this meal in the context of their daily goals. "
-                "Include a simple comparison of the meal's nutrients vs remaining daily targets. "
-                "Keep it concise and encouraging."
+                f"Пользователь только что залогировал прием пищи: {description}\n"
+                f"Питательная ценность: {analysis}\n"
+                f"Текущие дневные итоги: {progress_data if progress_data else 'Цели не установлены'}\n"
+                f"Оставшиеся дневные цели: {remaining if remaining else 'Н/Д'}\n\n"
+                "Дайте краткий, дружелюбный отзыв об этом приеме пищи в контексте дневных целей. "
+                "Включите простое сравнение питательных веществ приема пищи с оставшимися дневными целями. "
+                "Будьте краткими и ободряющими."
             )
             
             logger.info(f"Requesting feedback from LLM for user {user.id}")
@@ -171,35 +164,35 @@ class FoodTrackerBot:
             
             # Prepare response
             response = (
-                f'Meal saved!\n\n'
-                f'This meal:\n'
-                f'Calories: {analysis["calories"]}\n'
-                f'Protein: {analysis["protein"]}g\n'
-                f'Fat: {analysis["fat"]}g\n'
-                f'Carbs: {analysis["carbs"]}g\n\n'
+                f'✅ Прием пищи сохранен!\n\n'
+                f'📊 Этот прием пищи:\n'
+                f'• Калории: {analysis["calories"]}\n'
+                f'• Белки: {analysis["protein"]}г\n'
+                f'• Жиры: {analysis["fat"]}г\n'
+                f'• Углеводы: {analysis["carbs"]}г\n\n'
             )
             
             if progress_data:
                 response += (
-                    f'Today\'s totals:\n'
-                    f'Calories: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
-                    f'Protein: {progress_data["protein"]}/{progress_data["goal_protein"]}g\n'
-                    f'Fat: {progress_data["fat"]}/{progress_data["goal_fat"]}g\n'
-                    f'Carbs: {progress_data["carbs"]}/{progress_data["goal_carbs"]}g\n\n'
+                    f'📈 Сегодняшние итоги:\n'
+                    f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
+                    f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
+                    f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
+                    f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
                 )
                 
                 if remaining:
                     response += (
-                        f'Remaining for today:\n'
-                        f'Calories: {remaining["calories"]}\n'
-                        f'Protein: {remaining["protein"]}g\n'
-                        f'Fat: {remaining["fat"]}g\n'
-                        f'Carbs: {remaining["carbs"]}g\n\n'
+                        f'🎯 Осталось на сегодня:\n'
+                        f'• Калории: {remaining["calories"]}\n'
+                        f'• Белки: {remaining["protein"]}г\n'
+                        f'• Жиры: {remaining["fat"]}г\n'
+                        f'• Углеводы: {remaining["carbs"]}г\n\n'
                     )
             
-            response += f'Feedback:\n{feedback}'
+            response += f'💬 Отзыв:\n{feedback}'
             
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(response, reply_markup=reply_markup)
@@ -207,9 +200,9 @@ class FoodTrackerBot:
             
         except Exception as e:
             logger.error(f"Error processing meal for user {user.id}: {str(e)}")
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text('Sorry, there was an error processing your meal. Please try again.', reply_markup=reply_markup)
+            await update.message.reply_text('⚠️ К сожалению, произошла ошибка при обработке вашего приема пищи. Пожалуйста, попробуйте еще раз.', reply_markup=reply_markup)
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Send a message when the command /start is issued."""
@@ -230,41 +223,39 @@ class FoodTrackerBot:
             
             if progress_data:
                 progress_text = (
-                    f'\nYour current progress:\n'
-                    f'Calories: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
-                    f'Protein: {progress_data["protein"]}/{progress_data["goal_protein"]}g\n'
-                    f'Fat: {progress_data["fat"]}/{progress_data["goal_fat"]}g\n'
-                    f'Carbs: {progress_data["carbs"]}/{progress_data["goal_carbs"]}g\n'
+                    f'\n📊 Ваш текущий прогресс:\n'
+                    f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
+                    f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
+                    f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
+                    f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n'
                 )
             else:
-                progress_text = '\nYou haven\'t set any goals yet.\n'
+                progress_text = '\n📝 Вы еще не установили цели по питанию.\n'
         except Exception as e:
             logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
-            progress_text = '\nUnable to retrieve your progress at the moment.\n'
+            progress_text = '\n⚠️ Не удалось получить информацию о вашем прогрессе.\n'
         
         keyboard = [
             [
-                InlineKeyboardButton("Set Goals", callback_data='set_goals'),
-                InlineKeyboardButton("Add Meal", callback_data='add_meal'),
+                InlineKeyboardButton("📅 Сегодняшние приемы пищи", callback_data='today'),
+                InlineKeyboardButton("📈 Недельная статистика", callback_data='weekly'),
             ],
             [
-                InlineKeyboardButton("Today's Meals", callback_data='today'),
-                InlineKeyboardButton("Weekly Summary", callback_data='weekly'),
-            ],
-            [
-                InlineKeyboardButton("Get Recommendations", callback_data='recommendations'),
+                InlineKeyboardButton("💡 Получить рекомендации", callback_data='recommendations'),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         help_text = (
-            'I am a nutrition tracking bot. Here\'s what I can do:\n\n'
-            '/set_goals - Set your nutrition goals\n'
-            '/add_meal - Add a meal\n'
-            '/today - View today\'s meals\n'
-            '/weekly - View weekly calorie summary\n'
-            '/recommendations - Get personalized nutrition advice\n'
-            '/help - Show this help message'
+            'Я бот для отслеживания питания. Вот что я умею:\n\n'
+            '/set_goals - Установить цели по питанию\n'
+            '/today - Посмотреть сегодняшние приемы пищи\n'
+            '/weekly - Посмотреть недельную статистику\n'
+            '/recommendations - Получить персонализированные рекомендации\n'
+            '/menu - Показать главное меню\n'
+            '/help - Показать эту справку\n\n'
+            'Чтобы добавить прием пищи, просто напишите, что вы съели.\n'
+            'Например: "тарелка овсянки с бананом и орехами"'
         )
         await update.message.reply_text(help_text + progress_text, reply_markup=reply_markup)
 
@@ -335,19 +326,22 @@ class FoodTrackerBot:
         
         keyboard = [
             [
-                InlineKeyboardButton("Weight Loss", callback_data='goal_weight_loss'),
-                InlineKeyboardButton("Muscle Gain", callback_data='goal_muscle_gain'),
+                InlineKeyboardButton("📉 Похудение", callback_data='goal_weight_loss'),
+                InlineKeyboardButton("📈 Набор массы", callback_data='goal_muscle_gain'),
             ],
             [
-                InlineKeyboardButton("Maintenance", callback_data='goal_maintenance'),
-                InlineKeyboardButton("Custom", callback_data='goal_custom'),
+                InlineKeyboardButton("⚖️ Поддержание", callback_data='goal_maintenance'),
+                InlineKeyboardButton("✏️ Свои цели", callback_data='goal_custom'),
+            ],
+            [
+                InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu'),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        message = 'Choose your goal:'
+        message = 'Выберите вашу цель:'
         if is_callback:
-            await update.callback_query.message.reply_text(message, reply_markup=reply_markup)
+            await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
         else:
             await update.message.reply_text(message, reply_markup=reply_markup)
 
@@ -356,11 +350,17 @@ class FoodTrackerBot:
         user = update.effective_user
         logger.info(f"User {user.id} requested to add a meal")
         
-        message = 'Please describe what you ate. For example: "bowl of oatmeal with banana and nuts"'
+        keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        message = (
+            'Опишите, что вы съели.\n\n'
+            'Например: "тарелка овсянки с бананом и орехами"'
+        )
         if is_callback:
-            await update.callback_query.message.reply_text(message)
+            await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
         else:
-            await update.message.reply_text(message)
+            await update.message.reply_text(message, reply_markup=reply_markup)
 
     async def today(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool = False):
         """Handle the /today command."""
@@ -371,22 +371,22 @@ class FoodTrackerBot:
             meals = self.db.get_today_meals(user.id)
             logger.info(f"Retrieved {len(meals)} meals for user {user.id}")
             
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             if not meals:
-                message = 'You haven\'t added any meals today.'
+                message = '📝 Вы еще не добавили приемы пищи сегодня.'
                 if is_callback:
                     await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
                 else:
                     await update.message.reply_text(message, reply_markup=reply_markup)
                 return
             
-            response = 'Today\'s meals:\n\n'
+            response = '🍽 Сегодняшние приемы пищи:\n\n'
             for meal in meals:
                 response += f'• {meal[0]}\n'
-                response += f'  Calories: {meal[1]}\n'
-                response += f'  P/F/C: {meal[2]}/{meal[3]}/{meal[4]}g\n\n'
+                response += f'  Калории: {meal[1]}\n'
+                response += f'  Б/Ж/У: {meal[2]}/{meal[3]}/{meal[4]}г\n\n'
             
             if is_callback:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
@@ -396,8 +396,8 @@ class FoodTrackerBot:
             
         except Exception as e:
             logger.error(f"Error retrieving today's meals for user {user.id}: {str(e)}")
-            error_message = 'Sorry, there was an error retrieving your meals. Please try again.'
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            error_message = '⚠️ К сожалению, произошла ошибка при получении ваших приемов пищи. Пожалуйста, попробуйте еще раз.'
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             if is_callback:
                 await update.callback_query.message.edit_text(error_message, reply_markup=reply_markup)
@@ -413,27 +413,27 @@ class FoodTrackerBot:
             weekly_data = self.db.get_weekly_summary(user.id)
             logger.info(f"Retrieved weekly data for user {user.id}: {weekly_data}")
             
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             if not weekly_data:
-                message = 'You haven\'t logged any meals in the last 7 days.'
+                message = '📝 Вы не залогировали приемы пищи за последние 7 дней.'
                 if is_callback:
                     await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
                 else:
                     await update.message.reply_text(message, reply_markup=reply_markup)
                 return
             
-            response = 'Your calorie intake for the last 7 days:\n\n'
+            response = '📊 Ваше потребление калорий за последние 7 дней:\n\n'
             for day in weekly_data:
                 date_str = day[0].strftime('%Y-%m-%d')
                 calories = day[1] or 0
-                response += f'{date_str}: {calories} calories\n'
+                response += f'• {date_str}: {calories} калорий\n'
             
             # Calculate average
             total_calories = sum(day[1] or 0 for day in weekly_data)
             avg_calories = total_calories / len(weekly_data)
-            response += f'\nAverage daily intake: {avg_calories:.0f} calories'
+            response += f'\n📈 Среднее дневное потребление: {avg_calories:.0f} калорий'
             
             if is_callback:
                 await update.callback_query.message.edit_text(response, reply_markup=reply_markup)
@@ -443,8 +443,8 @@ class FoodTrackerBot:
             
         except Exception as e:
             logger.error(f"Error retrieving weekly summary for user {user.id}: {str(e)}")
-            error_message = 'Sorry, there was an error retrieving your weekly summary. Please try again.'
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            error_message = '⚠️ К сожалению, произошла ошибка при получении вашей недельной статистики. Пожалуйста, попробуйте еще раз.'
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             if is_callback:
                 await update.callback_query.message.edit_text(error_message, reply_markup=reply_markup)
@@ -460,9 +460,9 @@ class FoodTrackerBot:
             # Get current progress
             progress_data = self.db.get_user_progress(user.id)
             if not progress_data:
-                keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+                keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                message = 'Please set your nutrition goals first to get personalized recommendations.'
+                message = '📝 Пожалуйста, сначала установите цели по питанию, чтобы получить персонализированные рекомендации.'
                 logger.info(f"No goals set for user {user.id}, cannot generate recommendations")
                 if is_callback:
                     await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
@@ -486,16 +486,16 @@ class FoodTrackerBot:
             
             # Prepare response
             response = (
-                f'Based on your current progress:\n\n'
-                f'Calories: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
-                f'Protein: {progress_data["protein"]}/{progress_data["goal_protein"]}g\n'
-                f'Fat: {progress_data["fat"]}/{progress_data["goal_fat"]}g\n'
-                f'Carbs: {progress_data["carbs"]}/{progress_data["goal_carbs"]}g\n\n'
-                f'Here are some recommendations for your next meal:\n\n'
+                f'📊 На основе вашего текущего прогресса:\n\n'
+                f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
+                f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
+                f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
+                f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
+                f'💡 Вот несколько рекомендаций для вашего следующего приема пищи:\n\n'
                 f'{recommendations}'
             )
             
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             if is_callback:
@@ -506,8 +506,8 @@ class FoodTrackerBot:
             
         except Exception as e:
             logger.error(f"Error generating recommendations for user {user.id}: {str(e)}")
-            error_message = 'Sorry, there was an error generating recommendations. Please try again.'
-            keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]]
+            error_message = '⚠️ К сожалению, произошла ошибка при генерации рекомендаций. Пожалуйста, попробуйте еще раз.'
+            keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             if is_callback:
                 await update.callback_query.message.edit_text(error_message, reply_markup=reply_markup)
