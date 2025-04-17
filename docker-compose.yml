@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.ubuntu
     env_file: .env
     ports:
       - "8000:8000"  # Для Prometheus метрик
