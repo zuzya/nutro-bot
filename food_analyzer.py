@@ -1,8 +1,8 @@
 import os
-from openai import AsyncOpenAI
+import json
+import httpx
 from dotenv import load_dotenv
 import logging
-import httpx
 
 load_dotenv()
 
@@ -10,28 +10,8 @@ logger = logging.getLogger(__name__)
 
 class FoodAnalyzer:
     def __init__(self):
-        # Configure proxy if specified
-        proxy_url = os.getenv('OPENAI_PROXY_URL')
-        if proxy_url:
-            try:
-                # Parse proxy components
-                address, port, username, password = proxy_url.split(':')
-                # Construct proxy URL with authentication
-                proxy_url = f"http://{username}:{password}@{address}:{port}"
-                logger.info(f"Using proxy: {proxy_url}")
-                self.client = AsyncOpenAI(
-                    api_key=os.getenv('OPENAI_API_KEY'),
-                    http_client=httpx.AsyncClient(
-                        proxies={"http": proxy_url, "https": proxy_url},
-                        timeout=30.0
-                    )
-                )
-            except Exception as e:
-                logger.error(f"Error configuring proxy: {str(e)}")
-                self.client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        else:
-            self.client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-            
+        self.api_key = os.getenv('OPENAI_API_KEY')
+        self.proxy_url = os.getenv('OPENAI_PROXY_URL')
         self.system_prompt = """Вы - эксперт по питанию. Ваша задача - анализировать описания еды и предоставлять точную информацию о питательной ценности.
         Для каждого описания еды предоставьте:
         1. Общее количество калорий
@@ -49,29 +29,56 @@ class FoodAnalyzer:
         }
         """
 
+    async def _make_request(self, payload: dict) -> dict:
+        """Make a request to OpenAI API with proxy support."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        try:
+            with httpx.Client(
+                proxies=self.proxy_url,
+                timeout=30.0,
+                verify=False  # Only disable SSL verification for proxy
+            ) as client:
+                response = client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error occurred: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Error making request: {str(e)}")
+            raise
+
     async def analyze_meal(self, description: str) -> dict:
         """Analyze a meal description and return nutritional information."""
         try:
             logger.info(f"Analyzing meal description: {description}")
             
-            response = await self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",
-                messages=[
+            payload = {
+                "model": "gpt-4-turbo-preview",
+                "messages": [
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": f"Analyze this meal: {description}"}
                 ],
-                response_format={"type": "json_object"}
-            )
+                "response_format": {"type": "json_object"}
+            }
             
-            # Extract and parse the JSON response
-            result = response.choices[0].message.content
+            response = await self._make_request(payload)
+            result = response['choices'][0]['message']['content']
             logger.info(f"LLM analysis response: {result}")
             
-            return eval(result)  # Safe in this context as we control the output format
+            return json.loads(result)
             
         except Exception as e:
             logger.error(f"Error analyzing meal: {str(e)}")
-            # Return default values in case of error
             return {
                 "calories": 0,
                 "protein": 0,
@@ -84,17 +91,18 @@ class FoodAnalyzer:
         try:
             logger.info(f"Generating feedback with prompt: {prompt}")
             
-            response = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
                     {"role": "system", "content": "Вы - помощник по питанию. Давайте краткие, дружелюбные отзывы о приемах пищи в контексте дневных целей. Будьте ободряющими и практичными. Отвечайте на русском языке."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=150
-            )
+                "temperature": 0.7,
+                "max_tokens": 150
+            }
             
-            feedback = response.choices[0].message.content.strip()
+            response = await self._make_request(payload)
+            feedback = response['choices'][0]['message']['content'].strip()
             logger.info(f"LLM feedback response: {feedback}")
             return feedback
             
@@ -123,17 +131,18 @@ class FoodAnalyzer:
             
             logger.info(f"Generating recommendations with prompt: {prompt}")
             
-            response = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
+            payload = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
                     {"role": "system", "content": "Вы - помощник по питанию. Предоставляйте конкретные, практичные рекомендации на основе текущего состояния питания пользователя и оставшихся дневных целей. Отвечайте на русском языке."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=200
-            )
+                "temperature": 0.7,
+                "max_tokens": 200
+            }
             
-            recommendations = response.choices[0].message.content.strip()
+            response = await self._make_request(payload)
+            recommendations = response['choices'][0]['message']['content'].strip()
             logger.info(f"LLM recommendations response: {recommendations}")
             return recommendations
             
