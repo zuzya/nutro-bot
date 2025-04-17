@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set platform
-PLATFORM="linux/amd64"
+PLATFORM="linux/arm64"
 
 # Set Docker build timeout and configuration
 export DOCKER_BUILDKIT=1
@@ -81,7 +81,7 @@ while [ $retry_count -lt $max_retries ]; do
         --progress=plain \
         -f Dockerfile.ubuntu \
         -t nutro-bot-bot \
-        -t zuzyadocker/nutro-bot:amd64 \
+        -t zuzyadocker/nutro-bot:arm64 \
         --load \
         --cache-from type=local,src=/tmp/.buildx-cache \
         --cache-to type=local,dest=/tmp/.buildx-cache \
