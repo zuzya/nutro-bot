@@ -2,6 +2,7 @@ import os
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import logging
+import httpx
 
 load_dotenv()
 
@@ -9,7 +10,28 @@ logger = logging.getLogger(__name__)
 
 class FoodAnalyzer:
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        # Configure proxy if specified
+        proxy_url = os.getenv('OPENAI_PROXY_URL')
+        if proxy_url:
+            try:
+                # Parse proxy components
+                address, port, username, password = proxy_url.split(':')
+                # Construct proxy URL with authentication
+                proxy_url = f"http://{username}:{password}@{address}:{port}"
+                logger.info(f"Using proxy: {proxy_url}")
+                self.client = AsyncOpenAI(
+                    api_key=os.getenv('OPENAI_API_KEY'),
+                    http_client=httpx.AsyncClient(
+                        proxies={"http": proxy_url, "https": proxy_url},
+                        timeout=30.0
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Error configuring proxy: {str(e)}")
+                self.client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        else:
+            self.client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            
         self.system_prompt = """Вы - эксперт по питанию. Ваша задача - анализировать описания еды и предоставлять точную информацию о питательной ценности.
         Для каждого описания еды предоставьте:
         1. Общее количество калорий
