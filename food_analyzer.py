@@ -63,7 +63,7 @@ class FoodAnalyzer:
             logger.info(f"Analyzing meal description: {description}")
             
             payload = {
-                "model": "gpt-4-turbo-preview",
+                "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": f"Analyze this meal: {description}"}
@@ -92,7 +92,7 @@ class FoodAnalyzer:
             logger.info(f"Generating feedback with prompt: {prompt}")
             
             payload = {
-                "model": "gpt-3.5-turbo",
+                "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": "Вы - помощник по питанию. Давайте краткие, дружелюбные отзывы о приемах пищи в контексте дневных целей. Будьте ободряющими и практичными. Отвечайте на русском языке."},
                     {"role": "user", "content": prompt}
@@ -132,7 +132,7 @@ class FoodAnalyzer:
             logger.info(f"Generating recommendations with prompt: {prompt}")
             
             payload = {
-                "model": "gpt-3.5-turbo",
+                "model": "gpt-4o-mini",
                 "messages": [
                     {"role": "system", "content": "Вы - помощник по питанию. Предоставляйте конкретные, практичные рекомендации на основе текущего состояния питания пользователя и оставшихся дневных целей. Отвечайте на русском языке."},
                     {"role": "user", "content": prompt}

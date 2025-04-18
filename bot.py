@@ -161,31 +161,33 @@ class FoodTrackerBot:
                     f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
                     f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
                 )
+                
+                # Show full menu for users with goals
+                keyboard = [
+                    [
+                        InlineKeyboardButton("📅 Сегодняшние приемы пищи", callback_data='today'),
+                        InlineKeyboardButton("📈 Недельная статистика", callback_data='weekly'),
+                    ],
+                    [
+                        InlineKeyboardButton("💡 Получить рекомендации", callback_data='recommendations'),
+                    ]
+                ]
             else:
                 progress_text = '📝 Вы еще не установили цели по питанию.\n\n'
+                # Show only "Set Goals" button for users without goals
+                keyboard = [[InlineKeyboardButton("🎯 Задать цели", callback_data='set_goals')]]
+                
         except Exception as e:
             self.logger.error(f"Error retrieving progress for user {user.id}: {str(e)}")
             progress_text = '⚠️ Не удалось получить информацию о вашем прогрессе.\n\n'
+            keyboard = [[InlineKeyboardButton("🎯 Задать цели", callback_data='set_goals')]]
         
-        keyboard = [
-            [
-                InlineKeyboardButton("📅 Сегодняшние приемы пищи", callback_data='today'),
-                InlineKeyboardButton("📈 Недельная статистика", callback_data='weekly'),
-            ],
-            [
-                InlineKeyboardButton("💡 Получить рекомендации", callback_data='recommendations'),
-            ]
-        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         message = (
             f'👋 Привет, {user.first_name}! Я помогу вам отслеживать ваше питание.\n\n'
             f'{progress_text}'
-            'Что бы вы хотели сделать?\n\n'
-            'Доступные команды:\n'
-            '/set_goals - Установить цели по питанию\n'
-            '/help - Показать справку\n\n'
-            'Чтобы добавить прием пищи, просто напишите, что вы съели.'
+            'Что бы вы хотели сделать?'
         )
         
         if is_callback:
@@ -200,6 +202,19 @@ class FoodTrackerBot:
         self.logger.info(f"User {user.id} submitted meal description: {description}")
         
         try:
+            # Check if user has goals set
+            progress_data = self.db.get_user_progress(user.id)
+            if not progress_data:
+                # User doesn't have goals set, show only "Set Goals" button
+                keyboard = [[InlineKeyboardButton("🎯 Задать цели", callback_data='set_goals')]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                message = (
+                    '📝 Пожалуйста, сначала установите цели по питанию, чтобы я мог помочь вам отслеживать ваше питание.\n\n'
+                    'Нажмите кнопку "Задать цели" ниже.'
+                )
+                await update.message.reply_text(message, reply_markup=reply_markup)
+                return 
+
             # Analyze the meal using OpenAI
             self.logger.info(f"Starting meal analysis for user {user.id}")
             analysis = await self.food_analyzer.analyze_meal(description)
@@ -213,29 +228,21 @@ class FoodTrackerBot:
             self.metrics['meal_counter'].inc()
             self.metrics['user_counter'].inc()
             
-            # Get current progress and goals
-            progress_data = self.db.get_user_progress(user.id)
-            self.logger.info(f"Retrieved progress data for user {user.id}: {progress_data}")
-            
             # Calculate remaining values
-            if progress_data:
-                remaining = {
-                    'calories': progress_data['goal_calories'] - progress_data['calories'],
-                    'protein': progress_data['goal_protein'] - progress_data['protein'],
-                    'fat': progress_data['goal_fat'] - progress_data['fat'],
-                    'carbs': progress_data['goal_carbs'] - progress_data['carbs']
-                }
-                self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
-            else:
-                remaining = None
-                self.logger.info(f"No progress data available for user {user.id}")
+            remaining = {
+                'calories': progress_data['goal_calories'] - progress_data['calories'],
+                'protein': progress_data['goal_protein'] - progress_data['protein'],
+                'fat': progress_data['goal_fat'] - progress_data['fat'],
+                'carbs': progress_data['goal_carbs'] - progress_data['carbs']
+            }
+            self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             
             # Get feedback from LLM
             feedback_prompt = (
                 f"Пользователь только что залогировал прием пищи: {description}\n"
                 f"Питательная ценность: {analysis}\n"
-                f"Текущие дневные итоги: {progress_data if progress_data else 'Цели не установлены'}\n"
-                f"Оставшиеся дневные цели: {remaining if remaining else 'Н/Д'}\n\n"
+                f"Текущие дневные итоги: {progress_data}\n"
+                f"Оставшиеся дневные цели: {remaining}\n\n"
                 "Дайте краткий, дружелюбный отзыв об этом приеме пищи в контексте дневных целей. "
                 "Включите простое сравнение питательных веществ приема пищи с оставшимися дневными целями. "
                 "Будьте краткими и ободряющими."
@@ -253,27 +260,18 @@ class FoodTrackerBot:
                 f'• Белки: {analysis["protein"]}г\n'
                 f'• Жиры: {analysis["fat"]}г\n'
                 f'• Углеводы: {analysis["carbs"]}г\n\n'
+                f'📈 Сегодняшние итоги:\n'
+                f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
+                f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
+                f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
+                f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
+                f'🎯 Осталось на сегодня:\n'
+                f'• Калории: {remaining["calories"]}\n'
+                f'• Белки: {remaining["protein"]}г\n'
+                f'• Жиры: {remaining["fat"]}г\n'
+                f'• Углеводы: {remaining["carbs"]}г\n\n'
+                f'💬 Отзыв:\n{feedback}'
             )
-            
-            if progress_data:
-                response += (
-                    f'📈 Сегодняшние итоги:\n'
-                    f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
-                    f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
-                    f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
-                    f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
-                )
-                
-                if remaining:
-                    response += (
-                        f'🎯 Осталось на сегодня:\n'
-                        f'• Калории: {remaining["calories"]}\n'
-                        f'• Белки: {remaining["protein"]}г\n'
-                        f'• Жиры: {remaining["fat"]}г\n'
-                        f'• Углеводы: {remaining["carbs"]}г\n\n'
-                    )
-            
-            response += f'💬 Отзыв:\n{feedback}'
             
             keyboard = [[InlineKeyboardButton("🔙 В главное меню", callback_data='main_menu')]]
             reply_markup = InlineKeyboardMarkup(keyboard)
