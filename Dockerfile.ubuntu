@@ -52,6 +52,9 @@ WORKDIR /app
 # Copy application code
 COPY . .
 
+# Make start script executable
+RUN chmod +x start.sh
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
@@ -59,5 +62,5 @@ ENV PYTHONPATH=/app
 # Expose port for Prometheus metrics
 EXPOSE 8000
 
-# Run the application
-CMD ["python3", "bot.py"] 
+# Run the application using the start script
+CMD ["./start.sh"] 
