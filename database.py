@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 from datetime import datetime, timedelta
 from models import Base, User, UserGoals, Meal
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
 
@@ -101,15 +102,41 @@ class Database:
         finally:
             session.close()
 
+    def _sanitize_meal_description(self, description: str) -> str:
+        """Sanitize meal description to prevent XSS and other attacks."""
+        # Remove HTML tags
+        description = re.sub(r'<[^>]+>', '', description)
+        
+        # Remove potentially dangerous characters
+        description = description.replace(';', '')
+        description = description.replace('--', '')
+        description = description.replace('/*', '')
+        description = description.replace('*/', '')
+        
+        # Limit length
+        description = description[:500]
+        
+        return description.strip()
+
     def save_meal(self, telegram_id: int, description: str, analysis: dict):
         """Save a meal to the database."""
         session = self.Session()
         try:
+            # Validate user exists
             user = self._get_or_create_user(session, telegram_id)
+            if not user:
+                raise ValueError(f"User {telegram_id} not found")
+            
+            # Sanitize description
+            safe_description = self._sanitize_meal_description(description)
+            
+            # Validate analysis data
+            if not all(isinstance(analysis[key], (int, float)) for key in ['calories', 'protein', 'fat', 'carbs']):
+                raise ValueError("Invalid analysis data format")
             
             meal = Meal(
                 user_id=user.id,
-                description=description,
+                description=safe_description,
                 calories=analysis['calories'],
                 protein=analysis['protein'],
                 fat=analysis['fat'],
@@ -118,7 +145,7 @@ class Database:
             
             session.add(meal)
             session.commit()
-            logger.info(f"Saved meal for user {telegram_id}: {description}")
+            logger.info(f"Saved meal for user {telegram_id}: {safe_description}")
             
         except Exception as e:
             session.rollback()
@@ -131,7 +158,10 @@ class Database:
         """Get user's current progress towards their goals."""
         session = self.Session()
         try:
+            # Validate user exists
             user = self._get_or_create_user(session, telegram_id)
+            if not user:
+                raise ValueError(f"User {telegram_id} not found")
             
             # Get user's goals
             goals = session.query(UserGoals).filter_by(user_id=user.id).first()
