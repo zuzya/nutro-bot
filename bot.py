@@ -128,10 +128,8 @@ class FoodTrackerBot:
             # Check if user has goals set
             progress_data = self.db.get_user_progress(user.id)
             if not progress_data:
-                message = (
-                    '📝 Пожалуйста, сначала установите цели по питанию, чтобы я мог помочь тебе отслеживать ваше питание.\n\n'
-                    'Используйте команду /set_goals для установки целей.'
-                )
+                message = '📝 Пожалуйста, сначала установи цели по питанию, чтобы я мог помочь тебе отслеживать твое питание.\n\n'
+                'Используй команду /set_goals для установки целей.'
                 await update.message.reply_text(message, reply_markup=self._get_what_to_eat_button())
                 return 
 
@@ -153,10 +151,10 @@ class FoodTrackerBot:
             
             # Calculate remaining values
             remaining = {
-                'calories': progress_data['goal_calories'] - progress_data['calories'],
-                'protein': progress_data['goal_protein'] - progress_data['protein'],
-                'fat': progress_data['goal_fat'] - progress_data['fat'],
-                'carbs': progress_data['goal_carbs'] - progress_data['carbs']
+                'calories': round(progress_data['goal_calories'] - progress_data['calories']),
+                'protein': round(progress_data['goal_protein'] - progress_data['protein']),
+                'fat': round(progress_data['goal_fat'] - progress_data['fat']),
+                'carbs': round(progress_data['goal_carbs'] - progress_data['carbs'])
             }
             self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             
@@ -168,7 +166,8 @@ class FoodTrackerBot:
                 f"Оставшиеся дневные цели: {remaining}\n\n"
                 "Дайте краткий, дружелюбный отзыв об этом приеме пищи в контексте дневных целей. "
                 "Включите простое сравнение питательных веществ приема пищи с оставшимися дневными целями. "
-                "Будьте краткими и ободряющими."
+                "Укажи, на основе какого размера порции был сделан расчет (например, 'стандартная порция', 'средняя тарелка', 'примерно 200г' и т.д.). "
+                "Будь краткими и ободряющими."
             )
             
             # Show typing action while generating feedback
@@ -182,10 +181,10 @@ class FoodTrackerBot:
             response = (
                 f'✅ Прием пищи сохранен!\n\n'
                 f'📊 Этот прием пищи:\n'
-                f'• Калории: {analysis["calories"]}\n'
-                f'• Белки: {analysis["protein"]}г\n'
-                f'• Жиры: {analysis["fat"]}г\n'
-                f'• Углеводы: {analysis["carbs"]}г\n\n'
+                f'• Калории: {round(analysis["calories"])}\n'
+                f'• Белки: {round(analysis["protein"])}г\n'
+                f'• Жиры: {round(analysis["fat"])}г\n'
+                f'• Углеводы: {round(analysis["carbs"])}г\n\n'
                 f'🎯 Осталось на сегодня:\n'
                 f'• Калории: {remaining["calories"]}\n'
                 f'• Белки: {remaining["protein"]}г\n'
@@ -199,7 +198,7 @@ class FoodTrackerBot:
             
         except Exception as e:
             self.logger.error(f"Error processing meal for user {user.id}: {str(e)}")
-            error_message = '⚠️ К сожалению, произошла ошибка при обработке вашего приема пищи. Пожалуйста, попробуйте еще раз.'
+            error_message = '⚠️ К сожалению, произошла ошибка при обработке твоего приема пищи. Пожалуйста, попробуй еще раз.'
             await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
 
     async def handle_custom_goals_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -956,7 +955,7 @@ class FoodTrackerBot:
             # Get current progress
             progress_data = self.db.get_user_progress(user.id)
             if not progress_data:
-                message = '📝 Пожалуйста, сначала установите цели по питанию, чтобы получить персонализированные рекомендации.'
+                message = '📝 Пожалуйста, сначала установи цели по питанию, чтобы получить персонализированные рекомендации.'
                 self.logger.info(f"No goals set for user {user.id}, cannot generate recommendations")
                 if update.callback_query:
                     await update.callback_query.message.edit_text(message, reply_markup=self._get_what_to_eat_button())
@@ -964,12 +963,12 @@ class FoodTrackerBot:
                     await update.message.reply_text(message, reply_markup=self._get_what_to_eat_button())
                 return
             
-            # Calculate remaining values
+            # Calculate remaining values and round them to integers
             remaining = {
-                'calories': progress_data['goal_calories'] - progress_data['calories'],
-                'protein': progress_data['goal_protein'] - progress_data['protein'],
-                'fat': progress_data['goal_fat'] - progress_data['fat'],
-                'carbs': progress_data['goal_carbs'] - progress_data['carbs']
+                'calories': round(progress_data['goal_calories'] - progress_data['calories']),
+                'protein': round(progress_data['goal_protein'] - progress_data['protein']),
+                'fat': round(progress_data['goal_fat'] - progress_data['fat']),
+                'carbs': round(progress_data['goal_carbs'] - progress_data['carbs'])
             }
             self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             
@@ -981,14 +980,14 @@ class FoodTrackerBot:
             recommendations = await self.food_analyzer.get_recommendations(progress_data, remaining)
             self.logger.info(f"Received recommendations from LLM for user {user.id}: {recommendations}")
             
-            # Prepare response
+            # Prepare response with rounded values
             response = (
-                f'📊 На основе вашего текущего прогресса:\n\n'
-                f'• Калории: {progress_data["calories"]}/{progress_data["goal_calories"]}\n'
-                f'• Белки: {progress_data["protein"]}/{progress_data["goal_protein"]}г\n'
-                f'• Жиры: {progress_data["fat"]}/{progress_data["goal_fat"]}г\n'
-                f'• Углеводы: {progress_data["carbs"]}/{progress_data["goal_carbs"]}г\n\n'
-                f'💡 Вот несколько рекомендаций для вашего следующего приема пищи:\n\n'
+                f'📊 На основе твоего текущего прогресса:\n\n'
+                f'• Калории: {round(progress_data["calories"])}/{round(progress_data["goal_calories"])}\n'
+                f'• Белки: {round(progress_data["protein"])}/{round(progress_data["goal_protein"])}г\n'
+                f'• Жиры: {round(progress_data["fat"])}/{round(progress_data["goal_fat"])}г\n'
+                f'• Углеводы: {round(progress_data["carbs"])}/{round(progress_data["goal_carbs"])}г\n\n'
+                f'💡 Вот несколько рекомендаций для твоего следующего приема пищи:\n\n'
                 f'{recommendations}'
             )
             
@@ -999,8 +998,8 @@ class FoodTrackerBot:
             
             # Send additional message with suggestion to add a meal
             add_meal_message = (
-                '🍽 Хотите добавить прием пищи?\n\n'
-                'Просто напишите, что вы съели, например:\n'
+                '🍽 Хочешь добавить прием пищи?\n\n'
+                'Просто напиши, что ты съел, например:\n'
                 '"тарелка овсянки с бананом и орехами"'
             )
             await context.bot.send_message(chat_id=user.id, text=add_meal_message)
@@ -1009,7 +1008,7 @@ class FoodTrackerBot:
             
         except Exception as e:
             self.logger.error(f"Error generating recommendations for user {user.id}: {str(e)}")
-            error_message = '⚠️ К сожалению, произошла ошибка при генерации рекомендаций. Пожалуйста, попробуйте еще раз.'
+            error_message = '⚠️ К сожалению, произошла ошибка при генерации рекомендаций. Пожалуйста, попробуй еще раз.'
             if update.callback_query:
                 await update.callback_query.message.edit_text(error_message, reply_markup=self._get_what_to_eat_button())
             else:
