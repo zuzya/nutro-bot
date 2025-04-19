@@ -1,7 +1,9 @@
 import os
 import logging
 import asyncio
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from dotenv import load_dotenv
 from database import Database
@@ -75,8 +77,13 @@ class FoodTrackerBot:
         text = update.message.text
         
         # Check if user is in custom goals input state
-        if user.id in self.user_states and self.user_states[user.id] == 'waiting_for_custom_goals':
-            await self.handle_custom_goals_input(update, context)
+        if user.id in self.user_states:
+            if self.user_states[user.id] == 'waiting_for_custom_goals':
+                await self.handle_custom_goals_input(update, context)
+            elif self.user_states[user.id] == 'waiting_for_weight_info':
+                await self.handle_weight_input(update, context)
+            elif self.user_states[user.id] == 'waiting_for_activity_level':
+                await self.handle_activity_level_input(update, context)
         else:
             # Handle as meal description
             await self.handle_meal_description(update, context)
@@ -121,7 +128,8 @@ class FoodTrackerBot:
                 f'• Белки: {goals["protein"]}г\n'
                 f'• Жиры: {goals["fat"]}г\n'
                 f'• Углеводы: {goals["carbs"]}г\n\n'
-                'Используйте команду /today для просмотра лога дня'
+                '💡 Вы можете вводить информацию о приемах пищи прямо в чат!\n'
+                'Просто напишите, что вы съели, например: "тарелка овсянки с бананом и орехами"'
             )
             
             await update.message.reply_text(response)
@@ -133,6 +141,240 @@ class FoodTrackerBot:
             self.logger.error(f"Error setting custom goals for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
             await update.message.reply_text(error_message)
+            del self.user_states[user.id]
+
+    async def handle_weight_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle weight information input."""
+        user = update.effective_user
+        text = update.message.text
+        
+        try:
+            # Parse current and target weight
+            parts = text.split()
+            if len(parts) != 2:
+                raise ValueError("Неверный формат. Введите значения через пробел: текущий_вес желаемый_вес")
+            
+            current_weight = float(parts[0])
+            target_weight = float(parts[1])
+            
+            # Validate the weights
+            if current_weight <= 0 or target_weight <= 0:
+                raise ValueError("Вес должен быть положительным числом")
+            
+            # Store weights in context
+            context.user_data['current_weight'] = current_weight
+            context.user_data['target_weight'] = target_weight
+            
+            # Set state to waiting for activity level
+            self.user_states[user.id] = 'waiting_for_activity_level'
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("🪑 Малоподвижный", callback_data='activity_sedentary'),
+                ],
+                [
+                    InlineKeyboardButton("🏃 Умеренная активность", callback_data='activity_moderate'),
+                ],
+                [
+                    InlineKeyboardButton("🏋️ Высокая активность", callback_data='activity_active'),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            message = (
+                'Выберите ваш уровень физической активности:\n\n'
+                '🪑 Малоподвижный - сидячая работа, мало движения\n'
+                '🏃 Умеренная - 1-2 тренировки в неделю и прогулки\n'
+                '🏋️ Высокая - 3 тренировки в неделю'
+            )
+            await update.message.reply_text(message, reply_markup=reply_markup)
+            
+        except ValueError as e:
+            error_message = f'⚠️ {str(e)}\n\n'
+            error_message += 'Пожалуйста, введите значения в формате:\nтекущий_вес желаемый_вес\nНапример: 80 75'
+            await update.message.reply_text(error_message)
+        except Exception as e:
+            self.logger.error(f"Error processing weight input for user {user.id}: {str(e)}")
+            error_message = '⚠️ К сожалению, произошла ошибка при обработке вашего ввода. Пожалуйста, попробуйте еще раз.'
+            await update.message.reply_text(error_message)
+            del self.user_states[user.id]
+
+    async def calculate_goals_with_llm(self, current_weight: float, target_weight: float, activity_level: str) -> tuple[dict, str]:
+        """Calculate nutrition goals using LLM based on weight and activity level."""
+        # Шаг 1: Получаем расчет от LLM
+        calculation_prompt = (
+            f"Рассчитай оптимальные значения калорий и макронутриентов для человека со следующими параметрами:\n"
+            f"- Текущий вес: {current_weight} кг\n"
+            f"- Целевой вес: {target_weight} кг\n"
+            f"- Уровень активности: {activity_level}\n\n"
+            f"Учитывай, что:\n"
+            f"- Для набора массы нужен профицит калорий\n"
+            f"- Для похудения нужен дефицит калорий\n"
+            f"- Для поддержания веса калории должны быть на уровне расхода\n"
+            f"- Белка должно быть 1.6-2.2г на кг целевого веса\n"
+            f"- Жиров должно быть 20-30% от общего количества калорий\n"
+            f"- Остальные калории должны приходиться на углеводы\n\n"
+            f"Напиши подробное объяснение расчета, включая:\n"
+            f"1. Как рассчитан базовый обмен веществ (BMR) - формула и значения\n"
+            f"2. Как учтен уровень активности - коэффициент и почему\n"
+            f"3. Как рассчитан профицит/дефицит калорий - сколько и почему\n"
+            f"4. Как распределены макронутриенты - расчет для каждого\n"
+            f"Объяснение должно быть понятным для обычного человека."
+        )
+        
+        try:
+            # Получаем расчет и объяснение
+            response = await self.food_analyzer.get_llm_response(calculation_prompt)
+            self.logger.info(f"LLM calculation response: {response}")
+            
+            # Шаг 2: Преобразуем ответ в JSON
+            format_prompt = (
+                f"Преобразуй следующий текст в JSON формат. ВАЖНО:\n"
+                f"1. Верни ТОЛЬКО чистый JSON без каких-либо дополнительных символов или форматирования\n"
+                f"2. Не используй markdown, блоки кода или другие форматирования\n"
+                f"3. Убедись, что все значения являются числами (не null)\n"
+                f"4. Объяснение должно быть разбито на 4 части, каждая часть должна содержать текст:\n"
+                f"   - bmr_explanation: как рассчитан базовый обмен (формула и значения)\n"
+                f"   - activity_explanation: как учтена активность (коэффициент и почему)\n"
+                f"   - calorie_explanation: как рассчитаны калории (сколько и почему)\n"
+                f"   - macro_explanation: как распределены макронутриенты (расчет для каждого)\n"
+                f"5. Структура должна быть точно такой:\n"
+                f"{{\n"
+                f'  "goals": {{\n'
+                f'    "calories": число,\n'
+                f'    "protein": число,\n'
+                f'    "fat": число,\n'
+                f'    "carbs": число\n'
+                f'  }},\n'
+                f'  "explanation": {{\n'
+                f'    "bmr_explanation": "текст",\n'
+                f'    "activity_explanation": "текст",\n'
+                f'    "calorie_explanation": "текст",\n'
+                f'    "macro_explanation": "текст"\n'
+                f'  }}\n'
+                f"}}\n\n"
+                f"Текст для преобразования:\n{response}"
+            )
+            
+            json_response = await self.food_analyzer.get_llm_response(format_prompt)
+            self.logger.info(f"LLM JSON response: {json_response}")
+            
+            # Очищаем ответ от возможных markdown блоков и лишних символов
+            json_response = json_response.strip()
+            if json_response.startswith('```'):
+                json_response = json_response.split('```')[1]
+                if json_response.startswith('json'):
+                    json_response = json_response[4:]
+            json_response = json_response.strip()
+            
+            # Удаляем переносы строк и лишние пробелы
+            json_response = ' '.join(json_response.split())
+            
+            # Проверяем и парсим JSON
+            if not json_response.startswith('{') or not json_response.endswith('}'):
+                self.logger.error(f"Invalid JSON format. Response: {json_response}")
+                raise ValueError("Invalid JSON format in LLM response")
+            
+            try:
+                result = json.loads(json_response)
+            except json.JSONDecodeError as e:
+                self.logger.error(f"JSON decode error: {str(e)}. Response: {json_response}")
+                raise ValueError("Invalid JSON format in LLM response")
+            
+            # Проверяем наличие необходимых полей
+            if 'goals' not in result or 'explanation' not in result:
+                self.logger.error(f"Missing required fields. Response: {result}")
+                raise ValueError("Missing required fields in LLM response")
+            
+            # Проверяем структуру goals
+            goals = result['goals']
+            required_fields = ['calories', 'protein', 'fat', 'carbs']
+            if not all(field in goals for field in required_fields):
+                self.logger.error(f"Missing required fields in goals. Goals: {goals}")
+                raise ValueError("Missing required fields in goals object")
+            
+            # Проверяем типы значений
+            if not all(isinstance(goals[field], (int, float)) for field in required_fields):
+                self.logger.error(f"Invalid value types in goals. Goals: {goals}")
+                raise ValueError("Invalid value types in goals object")
+            
+            # Проверяем структуру explanation
+            explanation = result['explanation']
+            required_explanation_fields = ['bmr_explanation', 'activity_explanation', 'calorie_explanation', 'macro_explanation']
+            if not all(field in explanation for field in required_explanation_fields):
+                self.logger.error(f"Missing required fields in explanation. Explanation: {explanation}")
+                raise ValueError("Missing required fields in explanation object")
+            
+            # Проверяем, что все поля объяснения содержат текст
+            if not all(explanation[field].strip() for field in required_explanation_fields):
+                self.logger.error(f"Empty explanation fields. Explanation: {explanation}")
+                raise ValueError("Empty explanation fields")
+            
+            # Округляем значения до целых чисел
+            goals = {k: int(round(v)) for k, v in goals.items()}
+            
+            return goals, explanation
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating goals with LLM: {str(e)}")
+            # Fallback to default calculation if LLM fails
+            goals = self.calculate_nutrition_goals(current_weight, target_weight, activity_level)
+            return goals, {
+                "bmr_explanation": "Базовый обмен веществ рассчитан по формуле Миффлина-Сан Жеора с учетом вашего веса",
+                "activity_explanation": f"Уровень активности '{activity_level}' учтен с коэффициентом для расчета общего расхода калорий",
+                "calorie_explanation": f"Калории рассчитаны с учетом вашей цели {'набора' if target_weight > current_weight else 'похудения' if target_weight < current_weight else 'поддержания'} веса",
+                "macro_explanation": f"Белок: {goals['protein']}г (2г/кг), жиры: {goals['fat']}г (25% калорий), углеводы: {goals['carbs']}г (остаток калорий)"
+            }
+
+    async def handle_activity_level_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle activity level selection."""
+        query = update.callback_query
+        user = update.effective_user
+        
+        try:
+            activity_level = query.data.replace('activity_', '')
+            current_weight = context.user_data['current_weight']
+            target_weight = context.user_data['target_weight']
+            
+            # Show loading message and typing action
+            await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.TYPING)
+            await query.message.edit_text("🤔 Рассчитываю оптимальные значения калорий и макронутриентов...")
+            
+            # Calculate goals using LLM
+            goals, explanation = await self.calculate_goals_with_llm(current_weight, target_weight, activity_level)
+            
+            # Save the goals
+            self.db.set_user_goals(user.id, goals)
+            self.logger.info(f"Set weight-based goals for user {user.id}: {goals}")
+            
+            # Clear the state
+            del self.user_states[user.id]
+            del context.user_data['current_weight']
+            del context.user_data['target_weight']
+            
+            response = (
+                f'✅ Цели установлены!\n\n'
+                f'📊 Ваши цели по питанию:\n'
+                f'• Калории: {goals["calories"]}\n'
+                f'• Белки: {goals["protein"]}г\n'
+                f'• Жиры: {goals["fat"]}г\n'
+                f'• Углеводы: {goals["carbs"]}г\n\n'
+                f'📝 Как это рассчитано:\n\n'
+                f'1️⃣ Базовый обмен веществ:\n{explanation["bmr_explanation"]}\n\n'
+                f'2️⃣ Учет активности:\n{explanation["activity_explanation"]}\n\n'
+                f'3️⃣ Расчет калорий:\n{explanation["calorie_explanation"]}\n\n'
+                f'4️⃣ Распределение макронутриентов:\n{explanation["macro_explanation"]}\n\n'
+                f'💡 Вы можете вводить информацию о приемах пищи прямо в чат!\n'
+                f'Просто напишите, что вы съели, например: "тарелка овсянки с бананом и орехами"'
+            )
+            
+            await query.message.edit_text(response)
+            self.logger.info(f"Sent goal confirmation to user {user.id}")
+            
+        except Exception as e:
+            self.logger.error(f"Error setting weight-based goals for user {user.id}: {str(e)}")
+            error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
+            await query.message.edit_text(error_message)
             del self.user_states[user.id]
 
     async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -186,6 +428,9 @@ class FoodTrackerBot:
                 await update.message.reply_text(message)
                 return 
 
+            # Show typing action while analyzing
+            await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.TYPING)
+            
             # Analyze the meal using OpenAI
             self.logger.info(f"Starting meal analysis for user {user.id}")
             analysis = await self.food_analyzer.analyze_meal(description)
@@ -218,6 +463,9 @@ class FoodTrackerBot:
                 "Включите простое сравнение питательных веществ приема пищи с оставшимися дневными целями. "
                 "Будьте краткими и ободряющими."
             )
+            
+            # Show typing action while generating feedback
+            await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.TYPING)
             
             self.logger.info(f"Requesting feedback from LLM for user {user.id}")
             feedback = await self.food_analyzer.get_feedback(feedback_prompt)
@@ -387,7 +635,6 @@ class FoodTrackerBot:
         """Handle button callbacks."""
         query = update.callback_query
         user = update.effective_user
-        self.logger.info(f"User {user.id} pressed button: {query.data}")
         
         await query.answer()
         
@@ -404,6 +651,18 @@ class FoodTrackerBot:
         elif query.data.startswith('goal_'):
             goal_type = query.data[5:]  # Remove 'goal_' prefix
             await self.handle_goal_selection(update, context, goal_type)
+        elif query.data == 'weight_based':
+            # Set state to waiting for weight information
+            self.user_states[user.id] = 'waiting_for_weight_info'
+            
+            message = (
+                'Введите ваш текущий вес и желаемый вес через пробел.\n'
+                'Например: 70 75\n\n'
+                'Это означает, что ваш текущий вес 70 кг, и вы хотите достичь веса 75 кг.'
+            )
+            await query.message.edit_text(message)
+        elif query.data.startswith('activity_'):
+            await self.handle_activity_level_input(update, context)
 
     async def handle_goal_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, goal_type: str):
         """Handle goal selection."""
@@ -420,6 +679,27 @@ class FoodTrackerBot:
                 'Например: 2000 150 60 200'
             )
             await update.callback_query.message.edit_text(message)
+            return
+        
+        if goal_type == 'weight_based':
+            # Set state to waiting for weight information
+            self.user_states[user.id] = 'waiting_for_weight_info'
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("📉 Похудение", callback_data='weight_loss'),
+                    InlineKeyboardButton("📈 Набор массы", callback_data='weight_gain'),
+                ],
+                [
+                    InlineKeyboardButton("⚖️ Поддержание", callback_data='weight_maintain'),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            message = (
+                'Выберите вашу цель по весу:'
+            )
+            await update.callback_query.message.edit_text(message, reply_markup=reply_markup)
             return
         
         try:
@@ -454,17 +734,13 @@ class FoodTrackerBot:
         
         keyboard = [
             [
-                InlineKeyboardButton("📉 Похудение", callback_data='goal_weight_loss'),
-                InlineKeyboardButton("📈 Набор массы", callback_data='goal_muscle_gain'),
-            ],
-            [
-                InlineKeyboardButton("⚖️ Поддержание", callback_data='goal_maintenance'),
+                InlineKeyboardButton("📊 На основе веса", callback_data='weight_based'),
                 InlineKeyboardButton("✏️ Свои цели", callback_data='goal_custom'),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        message = 'Выберите вашу цель:'
+        message = 'Выберите способ установки целей:'
         await update.message.reply_text(message, reply_markup=reply_markup)
 
     async def today(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -637,6 +913,9 @@ class FoodTrackerBot:
             }
             self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             
+            # Show typing action while generating recommendations
+            await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.TYPING)
+            
             # Get recommendations from LLM
             self.logger.info(f"Requesting recommendations from LLM for user {user.id}")
             recommendations = await self.food_analyzer.get_recommendations(progress_data, remaining)
@@ -660,6 +939,51 @@ class FoodTrackerBot:
             self.logger.error(f"Error generating recommendations for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при генерации рекомендаций. Пожалуйста, попробуйте еще раз.'
             await update.message.reply_text(error_message)
+
+    def calculate_nutrition_goals(self, current_weight: float, target_weight: float, activity_level: str = 'moderate') -> dict:
+        """Calculate nutrition goals based on current and target weight."""
+        # Calculate base metabolic rate (BMR) using Mifflin-St Jeor Equation
+        # For simplicity, we'll use a fixed age (30) and height (170cm)
+        bmr = 10 * current_weight + 6.25 * 170 - 5 * 30 + 5
+        
+        # Activity level multipliers
+        activity_multipliers = {
+            'sedentary': 1.2,      # Little or no exercise
+            'light': 1.375,        # Light exercise 1-3 days/week
+            'moderate': 1.55,      # Moderate exercise 3-5 days/week
+            'active': 1.725,       # Hard exercise 6-7 days/week
+            'very_active': 1.9     # Very hard exercise & physical job
+        }
+        
+        # Calculate total daily energy expenditure (TDEE)
+        tdee = bmr * activity_multipliers[activity_level]
+        
+        # Adjust calories based on weight goal
+        weight_difference = target_weight - current_weight
+        if weight_difference < 0:  # Weight loss
+            daily_calories = tdee - 500  # 500 calorie deficit for weight loss
+        elif weight_difference > 0:  # Weight gain
+            daily_calories = tdee + 500  # 500 calorie surplus for weight gain
+        else:  # Maintenance
+            daily_calories = tdee
+        
+        # Calculate macronutrient distribution
+        # Protein: 2g per kg of target weight
+        protein = target_weight * 2
+        
+        # Fat: 25% of total calories
+        fat = (daily_calories * 0.25) / 9  # 9 calories per gram of fat
+        
+        # Carbs: remaining calories
+        remaining_calories = daily_calories - (protein * 4 + fat * 9)
+        carbs = remaining_calories / 4  # 4 calories per gram of carbs
+        
+        return {
+            'calories': round(daily_calories),
+            'protein': round(protein),
+            'fat': round(fat),
+            'carbs': round(carbs)
+        }
 
 def main():
     """Start the bot."""

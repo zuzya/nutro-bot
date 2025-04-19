@@ -148,4 +148,21 @@ class FoodAnalyzer:
             
         except Exception as e:
             logger.error(f"Error generating recommendations: {str(e)}")
-            return "К сожалению, я не смог сгенерировать конкретные рекомендации в данный момент. Пожалуйста, попробуйте позже!" 
+            return "К сожалению, я не смог сгенерировать конкретные рекомендации в данный момент. Пожалуйста, попробуйте позже!"
+
+    async def get_llm_response(self, prompt: str) -> str:
+        """Get response from LLM for a given prompt."""
+        try:
+            response = await self._make_request({
+                "model": "gpt-4-turbo-preview",
+                "messages": [
+                    {"role": "system", "content": "Ты - эксперт по питанию и фитнесу. Ты помогаешь людям достигать их целей по весу и здоровью."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.7,
+                "max_tokens": 500
+            })
+            return response['choices'][0]['message']['content']
+        except Exception as e:
+            logger.error(f"Error getting LLM response: {str(e)}")
+            raise 
