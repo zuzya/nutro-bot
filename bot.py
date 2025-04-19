@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import json
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -122,6 +123,23 @@ class FoodTrackerBot:
         """Handle meal description input."""
         user = update.effective_user
         description = update.message.text
+        
+        # Edge case: empty input
+        if not description or description.strip() == '':
+            await update.message.reply_text(
+                '⚠️ Пожалуйста, опиши, что ты съел. Например: "тарелка овсянки с бананом"',
+                reply_markup=self._get_what_to_eat_button()
+            )
+            return
+            
+        # Edge case: input too long
+        if len(description) > 500:
+            await update.message.reply_text(
+                '⚠️ Описание слишком длинное. Пожалуйста, опиши прием пищи короче.',
+                reply_markup=self._get_what_to_eat_button()
+            )
+            return
+            
         self.logger.info(f"User {user.id} submitted meal description: {description}")
         
         try:
@@ -138,12 +156,30 @@ class FoodTrackerBot:
             
             # Analyze the meal using OpenAI
             self.logger.info(f"Starting meal analysis for user {user.id}")
-            analysis = await self.food_analyzer.analyze_meal(description)
+            try:
+                analysis = await self.food_analyzer.analyze_meal(description)
+                if not analysis:
+                    raise ValueError("Не удалось проанализировать прием пищи")
+            except Exception as e:
+                self.logger.error(f"Error analyzing meal: {str(e)}")
+                await update.message.reply_text(
+                    '⚠️ К сожалению, я не смог проанализировать этот прием пищи. Пожалуйста, опиши его более подробно.',
+                    reply_markup=self._get_what_to_eat_button()
+                )
+                return
+                
             self.logger.info(f"Meal analysis completed for user {user.id}: {analysis}")
             
             # Save to database
-            self.logger.info(f"Saving meal to database for user {user.id}")
-            self.db.save_meal(user.id, description, analysis)
+            try:
+                self.db.save_meal(user.id, description, analysis)
+            except Exception as e:
+                self.logger.error(f"Error saving meal to database: {str(e)}")
+                await update.message.reply_text(
+                    '⚠️ К сожалению, произошла ошибка при сохранении приема пищи. Пожалуйста, попробуй еще раз.',
+                    reply_markup=self._get_what_to_eat_button()
+                )
+                return
             
             # Update metrics
             self.metrics['meal_counter'].inc()
@@ -175,9 +211,14 @@ class FoodTrackerBot:
             # Show typing action while generating feedback
             await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.TYPING)
             
-            self.logger.info(f"Requesting feedback from LLM for user {user.id}")
-            feedback = await self.food_analyzer.get_feedback(feedback_prompt)
-            self.logger.info(f"Received feedback from LLM for user {user.id}: {feedback}")
+            try:
+                self.logger.info(f"Requesting feedback from LLM for user {user.id}")
+                feedback = await self.food_analyzer.get_feedback(feedback_prompt)
+                if not feedback:
+                    raise ValueError("Не удалось получить отзыв")
+            except Exception as e:
+                self.logger.error(f"Error getting feedback from LLM: {str(e)}")
+                feedback = "Спасибо за информацию о приеме пищи! Я сохранил его в твоем дневнике."
             
             # Prepare response
             response = (
@@ -208,31 +249,59 @@ class FoodTrackerBot:
         user = update.effective_user
         text = update.message.text
         
+        # Edge case: empty input
+        if not text or text.strip() == '':
+            await update.message.reply_text(
+                '⚠️ Пожалуйста, введи значения целей. Формат: калории белки жиры углеводы\nНапример: 2000 150 60 200',
+                reply_markup=self._get_what_to_eat_button()
+            )
+            return
+            
         self.logger.info(f"Processing custom goals input for user {user.id}: {text}")
         
         try:
             # Parse the input (format: calories protein fat carbs)
             parts = text.split()
-            if len(parts) != 4:
-                raise ValueError("Неверный формат. Введите значения через пробел: калории белки жиры углеводы")
             
-            goals = {
-                'calories': int(parts[0]),
-                'protein': int(parts[1]),
-                'fat': int(parts[2]),
-                'carbs': int(parts[3])
-            }
+            # Edge case: wrong number of values
+            if len(parts) != 4:
+                raise ValueError("Неверный формат. Введи 4 числа через пробел: калории белки жиры углеводы")
+            
+            # Edge case: non-numeric values
+            try:
+                goals = {
+                    'calories': int(parts[0]),
+                    'protein': int(parts[1]),
+                    'fat': int(parts[2]),
+                    'carbs': int(parts[3])
+                }
+            except ValueError:
+                raise ValueError("Все значения должны быть целыми числами")
+            
+            # Edge case: negative values
+            if any(value < 0 for value in goals.values()):
+                raise ValueError("Все значения должны быть положительными числами")
+                
+            # Edge case: unrealistic values
+            if goals['calories'] > 10000:
+                raise ValueError("Слишком большое значение калорий. Максимум 10000 ккал")
+            if goals['protein'] > 500:
+                raise ValueError("Слишком большое значение белка. Максимум 500г")
+            if goals['fat'] > 200:
+                raise ValueError("Слишком большое значение жиров. Максимум 200г")
+            if goals['carbs'] > 1000:
+                raise ValueError("Слишком большое значение углеводов. Максимум 1000г")
             
             self.logger.info(f"Parsed goals for user {user.id}: {goals}")
             
-            # Validate the goals
-            if any(value <= 0 for value in goals.values()):
-                raise ValueError("Все значения должны быть положительными числами")
-            
             # Save the goals
-            self.logger.info(f"Saving goals for user {user.id} to database")
-            self.db.set_user_goals(user.id, goals)
-            self.logger.info(f"Goals saved successfully for user {user.id}")
+            try:
+                self.logger.info(f"Saving goals for user {user.id} to database")
+                self.db.set_user_goals(user.id, goals)
+                self.logger.info(f"Goals saved successfully for user {user.id}")
+            except Exception as e:
+                self.logger.error(f"Error saving goals to database: {str(e)}")
+                raise ValueError("Не удалось сохранить цели. Пожалуйста, попробуй еще раз")
             
             # Update metrics
             self.metrics['goal_counter'].inc()
@@ -245,13 +314,13 @@ class FoodTrackerBot:
             
             response = (
                 f'✅ Цели установлены!\n\n'
-                f'📊 Ваши цели по питанию:\n'
+                f'📊 Твои цели по питанию:\n'
                 f'• Калории: {goals["calories"]}\n'
                 f'• Белки: {goals["protein"]}г\n'
                 f'• Жиры: {goals["fat"]}г\n'
                 f'• Углеводы: {goals["carbs"]}г\n\n'
-                '💡 Вы можете вводить информацию о приемах пищи прямо в чат!\n'
-                'Просто напишите, что вы съели, например: "тарелка овсянки с бананом и орехами"'
+                '💡 Теперь ты можешь вводить информацию о приемах пищи прямо в чат!\n'
+                'Просто напиши, что ты съел, например: "тарелка овсянки с бананом и орехами"'
             )
             
             await update.message.reply_text(response, reply_markup=self._get_what_to_eat_button())
@@ -259,11 +328,11 @@ class FoodTrackerBot:
             
         except ValueError as e:
             self.logger.error(f"Validation error for user {user.id}: {str(e)}")
-            error_message = f'⚠️ {str(e)}\n\nПожалуйста, введите значения в формате:\nкалории белки жиры углеводы\nНапример: 2000 150 60 200'
+            error_message = f'⚠️ {str(e)}\n\nПожалуйста, введи значения в формате:\nкалории белки жиры углеводы\nНапример: 2000 150 60 200'
             await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
         except Exception as e:
             self.logger.error(f"Error setting custom goals for user {user.id}: {str(e)}")
-            error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуйте еще раз.'
+            error_message = '⚠️ К сожалению, произошла ошибка при установке целей. Пожалуйста, попробуй еще раз.'
             await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
             if user.id in self.user_states:
                 del self.user_states[user.id]
@@ -274,18 +343,50 @@ class FoodTrackerBot:
         user = update.effective_user
         text = update.message.text
         
+        # Edge case: empty input
+        if not text or text.strip() == '':
+            await update.message.reply_text(
+                '⚠️ Пожалуйста, введи значения веса. Формат: текущий_вес желаемый_вес\nНапример: 70 75',
+                reply_markup=self._get_what_to_eat_button()
+            )
+            return
+            
         try:
             # Parse current and target weight
             parts = text.split()
+            
+            # Edge case: wrong number of values
             if len(parts) != 2:
-                raise ValueError("Неверный формат. Введите значения через пробел: текущий_вес желаемый_вес")
+                raise ValueError("Неверный формат. Введи два числа через пробел: текущий_вес желаемый_вес")
             
-            current_weight = float(parts[0])
-            target_weight = float(parts[1])
+            # Edge case: non-numeric values
+            try:
+                current_weight = float(parts[0])
+                target_weight = float(parts[1])
+            except ValueError:
+                raise ValueError("Вес должен быть числом")
             
-            # Validate the weights
+            # Edge case: negative values
             if current_weight <= 0 or target_weight <= 0:
                 raise ValueError("Вес должен быть положительным числом")
+                
+            # Edge case: unrealistic values
+            if current_weight > 150 or target_weight > 150:
+                raise ValueError("Вес не может превышать 150 кг")
+            if current_weight < 30 or target_weight < 30:
+                raise ValueError("Вес не может быть меньше 30 кг")
+                
+            # Edge case: current weight equals target weight
+            if current_weight == target_weight:
+                raise ValueError("Текущий вес не может быть равен целевому весу")
+                
+            # Edge case: weight loss but current weight is less than target
+            if current_weight < target_weight and "weight_loss" in context.user_data.get('goal_type', ''):
+                raise ValueError("Для похудения текущий вес должен быть больше целевого")
+                
+            # Edge case: weight gain but current weight is more than target
+            if current_weight > target_weight and "weight_gain" in context.user_data.get('goal_type', ''):
+                raise ValueError("Для набора массы текущий вес должен быть меньше целевого")
             
             # Store weights in context
             context.user_data['current_weight'] = current_weight
@@ -308,7 +409,7 @@ class FoodTrackerBot:
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             message = (
-                'Выберите ваш уровень физической активности:\n\n'
+                'Выбери свой уровень физической активности:\n\n'
                 '🪑 Малоподвижный - сидячая работа, мало движения\n'
                 '🏃 Умеренная - 1-2 тренировки в неделю и прогулки\n'
                 '🏋️ Высокая - 3 тренировки в неделю'
@@ -317,11 +418,11 @@ class FoodTrackerBot:
             
         except ValueError as e:
             error_message = f'⚠️ {str(e)}\n\n'
-            error_message += 'Пожалуйста, введите значения в формате:\nтекущий_вес желаемый_вес\nНапример: 80 75'
+            error_message += 'Пожалуйста, введи значения в формате:\nтекущий_вес желаемый_вес\nНапример: 70 75'
             await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
         except Exception as e:
             self.logger.error(f"Error processing weight input for user {user.id}: {str(e)}")
-            error_message = '⚠️ К сожалению, произошла ошибка при обработке вашего ввода. Пожалуйста, попробуйте еще раз.'
+            error_message = '⚠️ К сожалению, произошла ошибка при обработке твоего ввода. Пожалуйста, попробуй еще раз.'
             await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
             del self.user_states[user.id]
 
@@ -683,44 +784,78 @@ class FoodTrackerBot:
         query = update.callback_query
         user = update.effective_user
         
+        # Edge case: no callback data
+        if not query.data:
+            self.logger.error(f"Empty callback data from user {user.id}")
+            await query.answer("Произошла ошибка. Пожалуйста, попробуй еще раз.")
+            return
+            
+        # Edge case: user not in database
+        try:
+            progress_data = self.db.get_user_progress(user.id)
+        except Exception as e:
+            self.logger.error(f"Error checking user in database: {str(e)}")
+            await query.answer("Произошла ошибка. Пожалуйста, попробуй еще раз.")
+            return
+            
+        # Edge case: rate limiting
+        if hasattr(context.user_data, 'last_callback_time'):
+            last_time = context.user_data['last_callback_time']
+            current_time = time.time()
+            if current_time - last_time < 1:  # 1 second cooldown
+                await query.answer("Подожди немного перед следующим действием.")
+                return
+        context.user_data['last_callback_time'] = time.time()
+        
         await query.answer()
         
-        if query.data == 'main_menu':
-            await self.show_main_menu(update, context)
-        elif query.data == 'set_goals':
-            await self.set_goals(update, context)
-        elif query.data == 'today':
-            await self.today(update, context)
-        elif query.data == 'weekly':
-            await self.weekly(update, context)
-        elif query.data == 'what_to_eat':
-            await self.recommendations(update, context)
-        elif query.data == 'help':
-            await self.help(update, context)
-        elif query.data == 'goal_custom':
-            # Set state to waiting for custom goals input
-            self.user_states[user.id] = 'waiting_for_custom_goals'
-            self.logger.info(f"User {user.id} selected custom goals")
-            
-            message = (
-                'Введите ваши цели в формате:\n'
-                'калории белки жиры углеводы\n\n'
-                'Например: 2000 150 60 200'
-            )
-            await query.message.edit_text(message)
-        elif query.data == 'weight_based':
-            # Set state to waiting for weight information
-            self.user_states[user.id] = 'waiting_for_weight_info'
-            self.logger.info(f"User {user.id} selected weight-based goals")
-            
-            message = (
-                'Введите ваш текущий вес и желаемый вес через пробел.\n'
-                'Например: 70 75\n\n'
-                'Это означает, что ваш текущий вес 70 кг, и вы хотите достичь веса 75 кг.'
-            )
-            await query.message.edit_text(message)
-        elif query.data.startswith('activity_'):
-            await self.handle_activity_level_input(update, context)
+        try:
+            if query.data == 'main_menu':
+                await self.show_main_menu(update, context)
+            elif query.data == 'set_goals':
+                await self.set_goals(update, context)
+            elif query.data == 'today':
+                await self.today(update, context)
+            elif query.data == 'weekly':
+                await self.weekly(update, context)
+            elif query.data == 'what_to_eat':
+                await self.recommendations(update, context)
+            elif query.data == 'help':
+                await self.help(update, context)
+            elif query.data == 'goal_custom':
+                # Set state to waiting for custom goals input
+                self.user_states[user.id] = 'waiting_for_custom_goals'
+                self.logger.info(f"User {user.id} selected custom goals")
+                
+                message = (
+                    'Введи свои цели в формате:\n'
+                    'калории белки жиры углеводы\n\n'
+                    'Например: 2000 150 60 200'
+                )
+                await query.message.edit_text(message)
+            elif query.data == 'weight_based':
+                # Set state to waiting for weight information
+                self.user_states[user.id] = 'waiting_for_weight_info'
+                self.logger.info(f"User {user.id} selected weight-based goals")
+                
+                message = (
+                    'Введи свой текущий вес и желаемый вес через пробел.\n'
+                    'Например: 70 75\n\n'
+                    'Это означает, что твой текущий вес 70 кг, и ты хочешь достичь веса 75 кг.'
+                )
+                await query.message.edit_text(message)
+            elif query.data.startswith('activity_'):
+                await self.handle_activity_level_input(update, context)
+            else:
+                # Edge case: unknown callback data
+                self.logger.warning(f"Unknown callback data from user {user.id}: {query.data}")
+                await query.answer("Неизвестная команда. Пожалуйста, попробуй еще раз.")
+                
+        except Exception as e:
+            self.logger.error(f"Error handling button callback for user {user.id}: {str(e)}")
+            await query.answer("Произошла ошибка. Пожалуйста, попробуй еще раз.")
+            if user.id in self.user_states:
+                del self.user_states[user.id]
 
     async def handle_goal_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE, goal_type: str):
         """Handle goal selection."""
@@ -892,19 +1027,61 @@ class FoodTrackerBot:
             days_reached_protein = 0
             days_reached_fat = 0
             days_reached_carbs = 0
+            days_exceeded_calories = 0
+            days_exceeded_protein = 0
+            days_exceeded_fat = 0
+            days_exceeded_carbs = 0
             
             for day in weekly_data:
                 date_str = day['date'].strftime('%Y-%m-%d')
                 response += f'📅 {date_str}:\n'
+                
+                # Calculate percentages for each nutrient
+                calories_percent = (day['calories'] / goal_calories) * 100
+                protein_percent = (day['protein'] / goal_protein) * 100
+                fat_percent = (day['fat'] / goal_fat) * 100
+                carbs_percent = (day['carbs'] / goal_carbs) * 100
+                
+                # Format each nutrient line with appropriate emoji
                 response += f'• Калории: {day["calories"]}/{goal_calories}'
-                response += ' ✅' if day['reached_goals']['calories'] else ' ❌'
-                response += f'\n• Белки: {day["protein"]:.1f}/{goal_protein}г'
-                response += ' ✅' if day['reached_goals']['protein'] else ' ❌'
-                response += f'\n• Жиры: {day["fat"]:.1f}/{goal_fat}г'
-                response += ' ✅' if day['reached_goals']['fat'] else ' ❌'
-                response += f'\n• Углеводы: {day["carbs"]:.1f}/{goal_carbs}г'
-                response += ' ✅' if day['reached_goals']['carbs'] else ' ❌'
-                response += '\n\n'
+                if calories_percent > 125:
+                    response += ' ⚠️'
+                    days_exceeded_calories += 1
+                elif day['reached_goals']['calories']:
+                    response += ' ✅'
+                else:
+                    response += ' ❌'
+                response += f' ({round(calories_percent)}%)\n'
+                
+                response += f'• Белки: {day["protein"]:.1f}/{goal_protein}г'
+                if protein_percent > 125:
+                    response += ' ⚠️'
+                    days_exceeded_protein += 1
+                elif day['reached_goals']['protein']:
+                    response += ' ✅'
+                else:
+                    response += ' ❌'
+                response += f' ({round(protein_percent)}%)\n'
+                
+                response += f'• Жиры: {day["fat"]:.1f}/{goal_fat}г'
+                if fat_percent > 125:
+                    response += ' ⚠️'
+                    days_exceeded_fat += 1
+                elif day['reached_goals']['fat']:
+                    response += ' ✅'
+                else:
+                    response += ' ❌'
+                response += f' ({round(fat_percent)}%)\n'
+                
+                response += f'• Углеводы: {day["carbs"]:.1f}/{goal_carbs}г'
+                if carbs_percent > 125:
+                    response += ' ⚠️'
+                    days_exceeded_carbs += 1
+                elif day['reached_goals']['carbs']:
+                    response += ' ✅'
+                else:
+                    response += ' ❌'
+                response += f' ({round(carbs_percent)}%)\n\n'
                 
                 # Update totals
                 total_calories += day['calories']
@@ -938,14 +1115,26 @@ class FoodTrackerBot:
             response += f'• Калории: {days_reached_calories}/{total_days} дней ({days_reached_calories/total_days*100:.0f}%)\n'
             response += f'• Белки: {days_reached_protein}/{total_days} дней ({days_reached_protein/total_days*100:.0f}%)\n'
             response += f'• Жиры: {days_reached_fat}/{total_days} дней ({days_reached_fat/total_days*100:.0f}%)\n'
-            response += f'• Углеводы: {days_reached_carbs}/{total_days} дней ({days_reached_carbs/total_days*100:.0f}%)'
+            response += f'• Углеводы: {days_reached_carbs}/{total_days} дней ({days_reached_carbs/total_days*100:.0f}%)\n\n'
+            
+            # Add warnings for exceeded goals
+            if any([days_exceeded_calories, days_exceeded_protein, days_exceeded_fat, days_exceeded_carbs]):
+                response += '⚠️ Предупреждения:\n'
+                if days_exceeded_calories > 0:
+                    response += f'• Калории превышены на 25% или более в {days_exceeded_calories} днях\n'
+                if days_exceeded_protein > 0:
+                    response += f'• Белки превышены на 25% или более в {days_exceeded_protein} днях\n'
+                if days_exceeded_fat > 0:
+                    response += f'• Жиры превышены на 25% или более в {days_exceeded_fat} днях\n'
+                if days_exceeded_carbs > 0:
+                    response += f'• Углеводы превышены на 25% или более в {days_exceeded_carbs} днях\n'
             
             await update.message.reply_text(response, reply_markup=self._get_what_to_eat_button())
             self.logger.info(f"Weekly summary sent to user {user.id}")
             
         except Exception as e:
             self.logger.error(f"Error retrieving weekly summary for user {user.id}: {str(e)}")
-            error_message = '⚠️ К сожалению, произошла ошибка при получении вашей недельной статистики. Пожалуйста, попробуйте еще раз.'
+            error_message = '⚠️ К сожалением, произошла ошибка при получении вашей недельной статистики. Пожалуйста, попробуйте еще раз.'
             await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
 
     async def recommendations(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -955,43 +1144,110 @@ class FoodTrackerBot:
         
         try:
             # Get current progress
-            progress_data = self.db.get_user_progress(user.id)
-            if not progress_data:
-                message = '📝 Пожалуйста, сначала установи цели по питанию, чтобы получить персонализированные рекомендации.'
-                self.logger.info(f"No goals set for user {user.id}, cannot generate recommendations")
-                if update.callback_query:
-                    await update.callback_query.message.edit_text(message, reply_markup=self._get_what_to_eat_button())
-                else:
-                    await update.message.reply_text(message, reply_markup=self._get_what_to_eat_button())
-                return
+            try:
+                progress_data = self.db.get_user_progress(user.id)
+                if not progress_data:
+                    message = '📝 Пожалуйста, сначала установи цели по питанию, чтобы получить персонализированные рекомендации.'
+                    self.logger.info(f"No goals set for user {user.id}, cannot generate recommendations")
+                    if update.callback_query:
+                        await update.callback_query.message.edit_text(message, reply_markup=self._get_what_to_eat_button())
+                    else:
+                        await update.message.reply_text(message, reply_markup=self._get_what_to_eat_button())
+                    return
+            except Exception as e:
+                self.logger.error(f"Error retrieving progress data: {str(e)}")
+                raise ValueError("Не удалось получить информацию о твоем прогрессе")
             
             # Calculate remaining values and round them to integers
-            remaining = {
-                'calories': round(progress_data['goal_calories'] - progress_data['calories']),
-                'protein': round(progress_data['goal_protein'] - progress_data['protein']),
-                'fat': round(progress_data['goal_fat'] - progress_data['fat']),
-                'carbs': round(progress_data['goal_carbs'] - progress_data['carbs'])
-            }
+            try:
+                remaining = {
+                    'calories': round(progress_data['goal_calories'] - progress_data['calories']),
+                    'protein': round(progress_data['goal_protein'] - progress_data['protein']),
+                    'fat': round(progress_data['goal_fat'] - progress_data['fat']),
+                    'carbs': round(progress_data['goal_carbs'] - progress_data['carbs'])
+                }
+                
+                # Calculate percentage of goals achieved
+                percentages = {
+                    'calories': (progress_data['calories'] / progress_data['goal_calories']) * 100,
+                    'protein': (progress_data['protein'] / progress_data['goal_protein']) * 100,
+                    'fat': (progress_data['fat'] / progress_data['goal_fat']) * 100,
+                    'carbs': (progress_data['carbs'] / progress_data['goal_carbs']) * 100
+                }
+                
+                # Check for exceeded goals (25% or more)
+                exceeded_goals = []
+                for nutrient, percentage in percentages.items():
+                    if percentage > 125:  # 25% over the goal
+                        exceeded_goals.append(nutrient)
+                
+                # Edge case: all goals reached
+                if all(value <= 0 for value in remaining.values()):
+                    message = '🎉 Ты уже достиг всех своих целей на сегодня! Отличная работа!'
+                    if update.callback_query:
+                        await update.callback_query.message.edit_text(message)
+                    else:
+                        await update.message.reply_text(message)
+                    return
+                    
+                # Edge case: negative remaining values
+                remaining = {k: max(0, v) for k, v in remaining.items()}
+                
+            except Exception as e:
+                self.logger.error(f"Error calculating remaining values: {str(e)}")
+                raise ValueError("Не удалось рассчитать оставшиеся цели")
+            
             self.logger.info(f"Calculated remaining targets for user {user.id}: {remaining}")
             
             # Show typing action while generating recommendations
             await context.bot.send_chat_action(chat_id=user.id, action=ChatAction.TYPING)
             
             # Get recommendations from LLM
-            self.logger.info(f"Requesting recommendations from LLM for user {user.id}")
-            recommendations = await self.food_analyzer.get_recommendations(progress_data, remaining)
-            self.logger.info(f"Received recommendations from LLM for user {user.id}: {recommendations}")
+            try:
+                self.logger.info(f"Requesting recommendations from LLM for user {user.id}")
+                recommendations = await self.food_analyzer.get_recommendations(progress_data, remaining)
+                if not recommendations:
+                    raise ValueError("Не удалось получить рекомендации")
+            except Exception as e:
+                self.logger.error(f"Error getting recommendations from LLM: {str(e)}")
+                recommendations = (
+                    "На основе твоего текущего прогресса, рекомендую:\n"
+                    "1. Сбалансированный прием пищи с учетом оставшихся целей\n"
+                    "2. Обрати внимание на белок, если его осталось больше всего\n"
+                    "3. Выбери продукты, которые тебе нравятся и соответствуют твоим целям"
+                )
             
-            # Prepare response with rounded values
+            # Prepare response with rounded values and exceeded goals highlighting
             response = (
                 f'📊 На основе твоего текущего прогресса:\n\n'
-                f'• Калории: {round(progress_data["calories"])}/{round(progress_data["goal_calories"])}\n'
-                f'• Белки: {round(progress_data["protein"])}/{round(progress_data["goal_protein"])}г\n'
-                f'• Жиры: {round(progress_data["fat"])}/{round(progress_data["goal_fat"])}г\n'
-                f'• Углеводы: {round(progress_data["carbs"])}/{round(progress_data["goal_carbs"])}г\n\n'
-                f'💡 Вот несколько рекомендаций для твоего следующего приема пищи:\n\n'
-                f'{recommendations}'
             )
+            
+            # Add progress for each nutrient with highlighting for exceeded goals
+            for nutrient, value in progress_data.items():
+                if nutrient.startswith('goal_'):
+                    continue
+                    
+                goal = progress_data[f'goal_{nutrient}']
+                percentage = percentages[nutrient]
+                unit = 'г' if nutrient != 'calories' else ''
+                
+                if nutrient in exceeded_goals:
+                    response += f'⚠️ {nutrient.capitalize()}: {round(value)}/{round(goal)}{unit} ({round(percentage)}%)\n'
+                else:
+                    response += f'• {nutrient.capitalize()}: {round(value)}/{round(goal)}{unit} ({round(percentage)}%)\n'
+            
+            response += f'\n💡 Вот несколько рекомендаций для твоего следующего приема пищи:\n\n{recommendations}'
+            
+            if exceeded_goals:
+                response += '\n\n⚠️ Обрати внимание: некоторые цели превышены более чем на 25%.'
+                if 'calories' in exceeded_goals:
+                    response += '\n• Попробуй уменьшить порции или выбрать менее калорийные продукты'
+                if 'protein' in exceeded_goals:
+                    response += '\n• Снизь потребление белковых продуктов'
+                if 'fat' in exceeded_goals:
+                    response += '\n• Выбирай продукты с меньшим содержанием жиров'
+                if 'carbs' in exceeded_goals:
+                    response += '\n• Уменьши количество углеводов в следующих приемах пищи'
             
             if update.callback_query:
                 await update.callback_query.message.edit_text(response)
@@ -1008,6 +1264,13 @@ class FoodTrackerBot:
             
             self.logger.info(f"Recommendations sent to user {user.id}")
             
+        except ValueError as e:
+            self.logger.error(f"Validation error for user {user.id}: {str(e)}")
+            error_message = f'⚠️ {str(e)}'
+            if update.callback_query:
+                await update.callback_query.message.edit_text(error_message, reply_markup=self._get_what_to_eat_button())
+            else:
+                await update.message.reply_text(error_message, reply_markup=self._get_what_to_eat_button())
         except Exception as e:
             self.logger.error(f"Error generating recommendations for user {user.id}: {str(e)}")
             error_message = '⚠️ К сожалению, произошла ошибка при генерации рекомендаций. Пожалуйста, попробуй еще раз.'
