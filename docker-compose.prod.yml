@@ -10,26 +10,11 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
-      - DB_HOST=db
+      - DB_HOST=${DB_HOST}
       - DB_PORT=5432
-    depends_on:
-      - db
     ports:
       - "8000:8000"  # Prometheus metrics port
     restart: unless-stopped
-
-  db:
-    image: postgres:15
-    environment:
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
-      - POSTGRES_DB=${DB_NAME}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    restart: unless-stopped
-
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -59,5 +44,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
   grafana_data: 

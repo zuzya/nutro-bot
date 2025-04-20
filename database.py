@@ -113,9 +113,6 @@ class Database:
         description = description.replace('/*', '')
         description = description.replace('*/', '')
         
-        # Limit length
-        description = description[:500]
-        
         return description.strip()
 
     def save_meal(self, telegram_id: int, description: str, analysis: dict):

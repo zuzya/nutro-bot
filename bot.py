@@ -202,6 +202,19 @@ class FoodTrackerBot:
             self.metrics['meal_counter'].inc()
             self.metrics['user_counter'].inc()
             
+            # Get fresh progress data after saving the meal
+            try:
+                progress_data = self.db.get_user_progress(user.id)
+                if not progress_data:
+                    raise ValueError("Не удалось получить актуальные данные о прогрессе")
+            except Exception as e:
+                self.logger.error(f"Error getting fresh progress data: {str(e)}")
+                await update.message.reply_text(
+                    '⚠️ К сожалению, произошла ошибка при обновлении прогресса. Пожалуйста, попробуй еще раз.',
+                    reply_markup=self._get_what_to_eat_button()
+                )
+                return
+            
             # Calculate remaining values
             remaining = {
                 'calories': round(progress_data['goal_calories'] - progress_data['calories']),
