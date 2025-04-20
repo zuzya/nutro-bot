@@ -22,8 +22,8 @@ class Database:
         self.db_host = os.getenv('DB_HOST')
         self.db_port = os.getenv('DB_PORT')
         
-        # Create database URL
-        self.db_url = f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        # Create database URL with SSL settings
+        self.db_url = f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}?sslmode=require"
         
         # Initialize connection with retries
         self.engine = None
@@ -39,7 +39,13 @@ class Database:
         for attempt in range(max_retries):
             try:
                 logger.info(f"Attempting to connect to database (attempt {attempt + 1}/{max_retries})")
-                self.engine = create_engine(self.db_url)
+                self.engine = create_engine(
+                    self.db_url,
+                    pool_pre_ping=True,  # Enable connection health checks
+                    pool_recycle=3600,   # Recycle connections after 1 hour
+                    pool_size=5,         # Maximum number of connections
+                    max_overflow=10      # Maximum number of connections that can be created above pool_size
+                )
                 self.Session = sessionmaker(bind=self.engine)
                 
                 # Test the connection
@@ -47,14 +53,49 @@ class Database:
                     session.execute(text("SELECT 1"))
                 logger.info("Successfully connected to database")
                 return
-                
             except OperationalError as e:
-                logger.warning(f"Database connection failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                logger.error(f"Database connection error (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 if attempt < max_retries - 1:
                     logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                 else:
                     logger.error("Failed to connect to database after all retries")
+                    raise
+
+    def _get_session(self):
+        """Get a new database session with retry logic."""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                return self.Session()
+            except OperationalError as e:
+                logger.error(f"Session creation error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    # Try to reinitialize connection
+                    self._initialize_connection(max_retries=1, retry_delay=1)
+                else:
+                    raise
+
+    def _execute_with_retry(self, func, *args, **kwargs):
+        """Execute a database operation with retry logic."""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except OperationalError as e:
+                logger.error(f"Database operation error (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    # Try to reinitialize connection
+                    self._initialize_connection(max_retries=1, retry_delay=1)
+                else:
                     raise
 
     def _get_or_create_user(self, session, telegram_id):
@@ -68,7 +109,7 @@ class Database:
 
     def set_user_goals(self, telegram_id: int, goals: dict):
         """Set or update user's nutrition goals."""
-        session = self.Session()
+        session = self._get_session()
         try:
             user = self._get_or_create_user(session, telegram_id)
             
@@ -117,7 +158,7 @@ class Database:
 
     def save_meal(self, telegram_id: int, description: str, analysis: dict):
         """Save a meal to the database."""
-        session = self.Session()
+        session = self._get_session()
         try:
             # Validate user exists
             user = self._get_or_create_user(session, telegram_id)
@@ -153,7 +194,7 @@ class Database:
 
     def get_user_progress(self, telegram_id: int) -> dict:
         """Get user's current progress towards their goals."""
-        session = self.Session()
+        session = self._get_session()
         try:
             # Validate user exists
             user = self._get_or_create_user(session, telegram_id)
@@ -202,7 +243,7 @@ class Database:
 
     def get_today_meals(self, telegram_id: int) -> list:
         """Get all meals logged today."""
-        session = self.Session()
+        session = self._get_session()
         try:
             user = self._get_or_create_user(session, telegram_id)
             
@@ -230,7 +271,7 @@ class Database:
 
     def get_weekly_summary(self, telegram_id: int) -> list:
         """Get weekly calorie summary with goal achievement information."""
-        session = self.Session()
+        session = self._get_session()
         try:
             user = self._get_or_create_user(session, telegram_id)
             

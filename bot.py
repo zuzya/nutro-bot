@@ -11,6 +11,7 @@ from database import Database
 from food_analyzer import FoodAnalyzer
 from goals_manager import GoalsManager
 from telemetry import init_telemetry
+from speech_recognizer import SpeechRecognizer
 
 # Load environment variables
 load_dotenv()
@@ -56,6 +57,9 @@ class FoodTrackerBot:
         self.food_analyzer = FoodAnalyzer()
         self.goals_manager = GoalsManager()
         
+        # Initialize speech recognizer
+        self.speech_recognizer = SpeechRecognizer()
+        
         # Dictionary to track user states
         self.user_states = {}
         self.logger.info("Bot initialized with all services")
@@ -71,11 +75,37 @@ class FoodTrackerBot:
         self.logger.info("Bot commands initialized")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle incoming text messages."""
+        """Handle incoming text and voice messages."""
         user = update.effective_user
-        text = update.message.text
         
         self.logger.info(f"Handling message from user {user.id} in state: {self.user_states.get(user.id, 'no state')}")
+        
+        # Handle voice message
+        if update.message.voice:
+            self.logger.info(f"Received voice message from user {user.id}")
+            try:
+                # Download voice message
+                voice_file = await context.bot.get_file(update.message.voice.file_id)
+                voice_data = await voice_file.download_as_bytearray()
+                
+                # Recognize speech
+                recognized_text = await self.speech_recognizer.recognize_audio(voice_data)
+                self.logger.info(f"Recognized text from voice message: {recognized_text}")
+                
+                # If recognition failed or returned empty text
+                if not recognized_text:
+                    await update.message.reply_text("Извините, не удалось распознать голосовое сообщение. Пожалуйста, попробуйте еще раз или отправьте текстовое сообщение.")
+                    return
+                
+                # Process recognized text as if it was a text message
+                text = recognized_text
+            except Exception as e:
+                self.logger.error(f"Error processing voice message from user {user.id}: {str(e)}")
+                await update.message.reply_text("Произошла ошибка при обработке голосового сообщения. Пожалуйста, попробуйте еще раз или отправьте текстовое сообщение.")
+                return
+        else:
+            # Handle text message
+            text = update.message.text
         
         # Check if user is in custom goals input state
         if user.id in self.user_states and self.user_states[user.id] == 'waiting_for_custom_goals':
@@ -122,7 +152,56 @@ class FoodTrackerBot:
     async def handle_meal_description(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle meal description input."""
         user = update.effective_user
-        description = update.message.text
+        
+        # Get description from text or voice message
+        if update.message.voice:
+            # Debug logging for voice message
+            self.logger.info(f"Voice message details: {update.message.voice}")
+            self.logger.info(f"Voice message duration: {update.message.voice.duration}")
+            self.logger.info(f"Voice message file size: {update.message.voice.file_size}")
+            
+            # Check voice message duration first
+            voice_duration = update.message.voice.duration
+            if voice_duration is None or voice_duration > 10:
+                self.logger.warning(f"Voice message too long: {voice_duration} seconds")
+                await update.message.reply_text(
+                    '⚠️ Голосовое сообщение слишком длинное. Пожалуйста, отправьте сообщение короче 10 секунд.',
+                    reply_markup=self._get_what_to_eat_button()
+                )
+                return
+                
+            try:
+                # Download voice message
+                voice_file = await context.bot.get_file(update.message.voice.file_id)
+                voice_data = await voice_file.download_as_bytearray()
+                
+                # Recognize speech
+                description = await self.speech_recognizer.recognize_audio(voice_data)
+                self.logger.info(f"Recognized text from voice message: {description}")
+                
+                if not description:
+                    await update.message.reply_text(
+                        "Извините, не удалось распознать голосовое сообщение. Пожалуйста, попробуйте еще раз или отправьте текстовое сообщение.",
+                        reply_markup=self._get_what_to_eat_button()
+                    )
+                    return
+                    
+                # Check if recognized text is too long
+                if len(description) > 500:
+                    await update.message.reply_text(
+                        '⚠️ Распознанный текст слишком длинный. Пожалуйста, опишите прием пищи короче.',
+                        reply_markup=self._get_what_to_eat_button()
+                    )
+                    return
+            except Exception as e:
+                self.logger.error(f"Error processing voice message: {str(e)}")
+                await update.message.reply_text(
+                    "Произошла ошибка при обработке голосового сообщения. Пожалуйста, попробуйте еще раз или отправьте текстовое сообщение.",
+                    reply_markup=self._get_what_to_eat_button()
+                )
+                return
+        else:
+            description = update.message.text
         
         # Edge case: empty input
         if not description or description.strip() == '':
@@ -1450,6 +1529,9 @@ def main():
     
     # Add message handler for meal descriptions
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
+    
+    # Add voice message handler
+    application.add_handler(MessageHandler(filters.VOICE, bot.handle_message))
     
     # Add callback query handler for buttons
     application.add_handler(CallbackQueryHandler(bot.button_callback))
